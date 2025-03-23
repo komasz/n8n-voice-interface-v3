@@ -7,6 +7,8 @@
     --dark-bg: #343a40;
     --success-color: #4caf50;
     --error-color: #f44336;
+    --user-message-bg: #e9f5ff;
+    --assistant-message-bg: #f0f7f0;
     --border-radius: 8px;
     --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     --transition: all 0.3s ease;
@@ -110,6 +112,92 @@ h1 {
     }
 }
 
+/* New Conversation Container */
+.conversation-container {
+    max-height: 500px;
+    overflow-y: auto;
+    margin: 1rem 0;
+    padding: 1rem;
+    border-radius: var(--border-radius);
+    background-color: var(--light-bg);
+    text-align: left;
+}
+
+.conversation-entry {
+    margin-bottom: 1.5rem;
+}
+
+.user-message, .assistant-message {
+    padding: 0.8rem;
+    border-radius: var(--border-radius);
+    margin-bottom: 0.5rem;
+}
+
+.user-message {
+    background-color: var(--user-message-bg);
+    border-left: 4px solid var(--primary-color);
+}
+
+.assistant-message {
+    background-color: var(--assistant-message-bg);
+    border-left: 4px solid var(--accent-color);
+}
+
+.message-status {
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+    font-size: 0.9rem;
+}
+
+.message-content {
+    font-size: 1rem;
+    line-height: 1.5;
+}
+
+.message-content.loading {
+    display: inline-block;
+    min-height: 1.5rem;
+    min-width: 80%;
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: loading 1.5s infinite;
+    border-radius: 4px;
+}
+
+@keyframes loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.audio-controls {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
+}
+
+.play-button {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.play-button:hover {
+    background-color: var(--primary-color);
+}
+
+/* Legacy containers (kept for compatibility) */
 #transcription-container, #response-container {
     margin-top: 2rem;
     text-align: left;
@@ -131,12 +219,6 @@ h1 {
     font-size: 1.1rem;
     line-height: 1.6;
     margin-top: 0.5rem;
-}
-
-.audio-controls {
-    margin-top: 1rem;
-    display: flex;
-    justify-content: flex-end;
 }
 
 .btn-icon {
@@ -208,23 +290,6 @@ input[type="text"] {
     border-radius: var(--border-radius);
     font-size: 1rem;
     margin-bottom: 1rem;
-}
-
-.checkbox-group {
-    display: flex;
-    align-items: center;
-    margin-bottom: 1rem;
-}
-
-.checkbox-group input[type="checkbox"] {
-    margin-right: 0.5rem;
-    width: 18px;
-    height: 18px;
-}
-
-.checkbox-group label {
-    margin-bottom: 0;
-    font-weight: normal;
 }
 
 .btn {
@@ -302,4 +367,44 @@ footer a:hover {
 /* Utility Classes */
 .hidden {
     display: none;
+}
+
+/* Scrollbar styles */
+.conversation-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.conversation-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+}
+
+.conversation-container::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 10px;
+}
+
+.conversation-container::-webkit-scrollbar-thumb:hover {
+    background: #a1a1a1;
+}
+
+/* Responsive styles */
+@media (max-width: 600px) {
+    .container {
+        padding: 1rem;
+    }
+    
+    .voice-interface {
+        padding: 1rem;
+    }
+    
+    .record-button {
+        width: 60px;
+        height: 60px;
+        font-size: 1.5rem;
+    }
+    
+    .conversation-container {
+        max-height: 400px;
+    }
 }
