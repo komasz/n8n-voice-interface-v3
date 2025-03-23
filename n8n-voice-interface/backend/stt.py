@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
+# For transcription, we should use whisper-1 first to verify functionality
 STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -33,33 +34,21 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
     logger.info("OpenAI API key found in environment")
 
     try:
-        # Get information about the uploaded file
+        # Log information about the file
         content_type = audio_file.content_type
-        original_filename = audio_file.filename
-        file_extension = os.path.splitext(original_filename)[1].lower()
-        
-        logger.info(f"File from request: {original_filename}, content-type: {content_type}")
-        
-        # Determine the correct MIME type and extension based on available info
-        # This is critical for OpenAI API compatibility
-        mime_type = determine_mime_type(content_type, file_extension)
-        logger.info(f"Determined MIME type: {mime_type}")
-        
-        # Create a filename with the proper extension
-        proper_extension = get_extension_for_mime(mime_type)
-        temp_filename = f"{uuid.uuid4()}{proper_extension}"
+        file_name = audio_file.filename
+        logger.info(f"File from request: {file_name}, content-type: {content_type}")
         
         # Save the uploaded file to a temporary location
         temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, temp_filename)
+        temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{audio_file.filename}")
 
         with open(temp_file_path, "wb") as temp_file:
-            # Read the file in chunks to support large files
+            # Read the file in chunks
             content = await audio_file.read()
             temp_file.write(content)
 
         logger.info(f"Saved audio to temporary file: {temp_file_path}")
-        logger.info(f"File size: {os.path.getsize(temp_file_path)} bytes")
 
         # Set up the request headers
         headers = {
@@ -68,16 +57,15 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
 
         # Prepare the file and form data
         with open(temp_file_path, "rb") as file:
-            logger.info(f"Sending file to OpenAI: {os.path.basename(temp_file_path)} ({mime_type})")
-            
+            # Set explicit MIME type to audio/mpeg as a safe default
             files = {
-                "file": (os.path.basename(temp_file_path), file, mime_type),
+                "file": (os.path.basename(temp_file_path), file, "audio/mpeg"),
                 "model": (None, STT_MODEL),
                 "language": (None, "pl")  # Force Polish language recognition
             }
             
             # Make the API request
-            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL} with language: pl")
+            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
             response = requests.post(
                 API_URL,
                 headers=headers,
@@ -86,9 +74,8 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
 
         # Clean up temporary file
         try:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-                logger.info(f"Removed temporary file: {temp_file_path}")
+            os.remove(temp_file_path)
+            logger.info(f"Removed temporary file: {temp_file_path}")
         except Exception as e:
             logger.warning(f"Failed to remove temporary file: {str(e)}")
 
@@ -104,10 +91,8 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
                     error_msg = error_data["error"]["message"]
             except:
                 pass
-                
-            # Add debugging info to error message for frontend
-            error_detail = f"{error_msg} (format: {mime_type}, model: {STT_MODEL})"
-            raise HTTPException(status_code=500, detail=error_detail)
+
+            raise HTTPException(status_code=500, detail=error_msg)
 
         # Parse the response
         result = response.json()
@@ -121,53 +106,3 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
 
         logger.error(f"Error during transcription: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
-
-def determine_mime_type(content_type, file_extension):
-    """
-    Determine the correct MIME type based on content type and file extension.
-    OpenAI API prefers clear, consistent MIME types.
-    """
-    # Check file extension first
-    if file_extension in ['.wav', '.wave']:
-        return 'audio/wav'
-    elif file_extension in ['.mp3', '.mpeg', '.mpga']:
-        return 'audio/mpeg'
-    elif file_extension in ['.m4a', '.mp4a']:
-        return 'audio/mp4'
-    elif file_extension in ['.webm']:
-        return 'audio/webm'
-    elif file_extension in ['.ogg', '.oga']:
-        return 'audio/ogg'
-    
-    # If no clear extension, use content_type
-    if content_type:
-        if 'wav' in content_type:
-            return 'audio/wav'
-        elif 'mp3' in content_type or 'mpeg' in content_type:
-            return 'audio/mpeg'
-        elif 'mp4' in content_type or 'm4a' in content_type:
-            return 'audio/mp4'
-        elif 'webm' in content_type:
-            return 'audio/webm'
-        elif 'ogg' in content_type:
-            return 'audio/ogg'
-    
-    # Default to WAV as it's well supported by OpenAI
-    return 'audio/wav'
-
-def get_extension_for_mime(mime_type):
-    """
-    Get the appropriate file extension for a MIME type
-    """
-    if 'wav' in mime_type:
-        return '.wav'
-    elif 'mp3' in mime_type or 'mpeg' in mime_type:
-        return '.mp3'
-    elif 'mp4' in mime_type or 'm4a' in mime_type:
-        return '.mp4'
-    elif 'webm' in mime_type:
-        return '.webm'
-    elif 'ogg' in mime_type:
-        return '.ogg'
-    else:
-        return '.wav'  # Default to .wav
