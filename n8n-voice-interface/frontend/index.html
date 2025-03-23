@@ -11,7 +11,7 @@
     <div class="container">
         <header>
             <h1>N8N Voice Interface</h1>
-            <p class="subtitle">Speak to trigger your n8n workflows</p>
+            <p class="subtitle">Speak to trigger your n8n workflows and hear responses</p>
         </header>
 
         <main>
@@ -34,8 +34,18 @@
                 </div>
 
                 <div id="transcription-container" class="hidden">
-                    <h3>Transcription:</h3>
+                    <h3>Your message:</h3>
                     <div id="transcription-text"></div>
+                </div>
+
+                <div id="response-container" class="hidden">
+                    <h3>N8N Response:</h3>
+                    <div id="response-text"></div>
+                    <div class="audio-controls">
+                        <button id="play-again-button" class="btn-icon" onclick="document.querySelector('audio').play()">
+                            <i class="fas fa-play"></i> Play Again
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -59,14 +69,15 @@
                         <li>Enter your n8n webhook URL in the settings</li>
                         <li>Click the microphone button and start speaking</li>
                         <li>Your speech will be transcribed and sent to n8n</li>
-                        <li>Check your n8n workflow for the incoming data</li>
+                        <li>n8n will process your request and send a response</li>
+                        <li>The response will be converted to speech and played automatically</li>
                     </ol>
                 </div>
             </div>
         </main>
 
         <footer>
-            <p>Powered by OpenAI's gpt-4o-transcribe | <a href="https://github.com/yourusername/n8n-voice-interface" target="_blank">View on GitHub</a></p>
+            <p>Powered by OpenAI's gpt-4o-transcribe & gpt-4o-mini-tts | <a href="https://github.com/yourusername/n8n-voice-interface" target="_blank">View on GitHub</a></p>
         </footer>
     </div>
 
