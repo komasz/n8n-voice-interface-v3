@@ -10,12 +10,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettingsButton = document.getElementById('save-settings');
     const responseContainer = document.getElementById('response-container');
     const responseText = document.getElementById('response-text');
+    const conversationContainer = document.getElementById('conversation-container');
     
     // Audio player for responses
     let audioPlayer = new Audio();
     
     // Status tracking
-    let waitingForResponse = false;
+    let activeRequests = 0;
     
     // Load saved webhook URL from localStorage
     webhookUrlInput.value = localStorage.getItem('webhookUrl') || '';
@@ -31,23 +32,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    let mediaRecorder;
+    // Flags for continuous listening mode
+    let isListening = false;      // Is the continuous listening mode active
+    let isRecording = false;      // Is currently recording audio
+    let isProcessing = false;     // Is currently processing a recording
+    
+    // Media objects
+    let mediaRecorder = null;
     let audioChunks = [];
-    let isRecording = false;
+    let recordingId = 0;          // Unique ID for each recording
     
     // Variables for silence detection
     let audioContext;
     let audioAnalyser;
     let audioSource;
+    let microphoneStream;
     let silenceDetectionInterval;
     
     // Silence detection settings
     const SILENCE_THRESHOLD = 15; // Threshold below which is considered silence
     const SILENCE_DURATION = 1500; // 1.5 seconds of silence to trigger stop
-    const CHECK_INTERVAL = 100; // Check every 100ms
-    let consecutiveSilenceChecks = 0;
+    const CHECK_INTERVAL = 100;   // Check every 100ms
     let silenceStartTime = null;
     let speechDetected = false;
+    
+    // Counter for the conversation entries
+    let conversationEntryCount = 0;
+    const MAX_CONVERSATION_ENTRIES = 10; // Maximum number of conversation entries to show
 
     // Check if browser supports required APIs
     if (!navigator.mediaDevices || !window.MediaRecorder) {
@@ -56,163 +67,430 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // Handle recording button click
-    recordButton.addEventListener('click', () => {
-        if (isRecording) {
-            stopRecording();
-        } else {
-            startRecording();
-        }
-    });
+    // Handle toggle button click - start/stop continuous listening
+    recordButton.addEventListener('click', toggleContinuousListening);
 
-    // Start recording function
-    async function startRecording() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    channelCount: 1,
-                    sampleRate: 16000
-                } 
-            });
-            
-            // Setup media recorder with specific MIME type if available
-            const mimeType = getSupportedMimeType();
-            const options = mimeType ? { mimeType } : {};
-            
-            mediaRecorder = new MediaRecorder(stream, options);
-            audioChunks = [];
-            
-            mediaRecorder.addEventListener('dataavailable', event => {
-                audioChunks.push(event.data);
-            });
-            
-            mediaRecorder.addEventListener('stop', () => {
-                // Stop silence detection
-                clearInterval(silenceDetectionInterval);
-                
-                // Close audio context
-                if (audioContext && audioContext.state !== 'closed') {
-                    audioContext.close().catch(e => console.error("Error closing audio context:", e));
-                }
-                
-                // Create audio blob with specific type
-                const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/mpeg' });
-                
-                console.log("Nagrywanie zakończone: ", {
-                    mimeType: audioBlob.type,
-                    size: audioBlob.size
-                });
-                
-                // Only process audio if it has some content
-                if (audioBlob.size > 100) {
-                    transcribeAudio(audioBlob);
-                } else {
-                    console.log("Audio too short, skipping transcription");
-                    statusMessage.textContent = 'Gotowy do słuchania';
-                    showMessage('Nagranie było zbyt krótkie', 'error');
-                }
-                
-                // Stop all tracks in the stream to release the microphone
-                stream.getTracks().forEach(track => track.stop());
-            });
-            
-            // Start recording
-            mediaRecorder.start(10); // Capture in 10ms chunks for more responsive stopping
-            isRecording = true;
-            
-            // Setup simple silence detection
-            setupSilenceDetection(stream);
-            
-            // Update UI
-            recordButton.classList.add('recording');
-            statusMessage.textContent = 'Słucham...';
-            visualizationContainer.classList.add('active-visualization');
-            hideMessage();
-            transcriptionContainer.classList.add('hidden');
-            responseContainer.classList.add('hidden');
-            
-        } catch (error) {
-            console.error('Błąd podczas uruchamiania nagrywania:', error);
-            showMessage(`Nie można uzyskać dostępu do mikrofonu: ${error.message}`, 'error');
+    // Toggle continuous listening mode
+    async function toggleContinuousListening() {
+        if (isListening) {
+            // Stop listening
+            stopListening();
+            recordButton.classList.remove('recording');
+            recordButton.title = "Rozpocznij ciągłe słuchanie";
+            statusMessage.textContent = 'Gotowy do słuchania';
+        } else {
+            // Start listening
+            try {
+                await startListening();
+                recordButton.classList.add('recording');
+                recordButton.title = "Zatrzymaj ciągłe słuchanie";
+                statusMessage.textContent = 'Ciągłe słuchanie aktywne...';
+                showMessage('Ciągłe słuchanie aktywne. Zacznij mówić, aby wysłać zapytanie.', 'success');
+            } catch (error) {
+                console.error('Błąd podczas uruchamiania słuchania:', error);
+                showMessage(`Nie można uzyskać dostępu do mikrofonu: ${error.message}`, 'error');
+            }
         }
     }
     
-    function setupSilenceDetection(stream) {
-        try {
-            // Create audio context
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            audioSource = audioContext.createMediaStreamSource(stream);
-            audioAnalyser = audioContext.createAnalyser();
+    // Start continuous listening mode
+    async function startListening() {
+        // Get microphone stream
+        microphoneStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                channelCount: 1,
+                sampleRate: 16000
+            } 
+        });
+        
+        // Setup audio context and analyzer
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioSource = audioContext.createMediaStreamSource(microphoneStream);
+        audioAnalyser = audioContext.createAnalyser();
+        
+        // Configure analyzer
+        audioAnalyser.fftSize = 256;
+        audioAnalyser.smoothingTimeConstant = 0.8;
+        audioSource.connect(audioAnalyser);
+        
+        // Reset detection state
+        silenceStartTime = null;
+        speechDetected = false;
+        isListening = true;
+        isRecording = false;
+        
+        // Setup the media recorder (but don't start it yet)
+        const mimeType = getSupportedMimeType();
+        const options = mimeType ? { mimeType } : {};
+        mediaRecorder = new MediaRecorder(microphoneStream, options);
+        
+        // Start silence detection loop
+        startSilenceDetection();
+        
+        // Start visualization
+        visualizationContainer.classList.add('active-visualization');
+        
+        console.log("Continuous listening mode activated");
+    }
+    
+    // Stop continuous listening mode
+    function stopListening() {
+        // Stop silence detection
+        clearInterval(silenceDetectionInterval);
+        
+        // Stop any active recording
+        if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+            isRecording = false;
+        }
+        
+        // Release microphone
+        if (microphoneStream) {
+            microphoneStream.getTracks().forEach(track => track.stop());
+        }
+        
+        // Close audio context
+        if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close().catch(e => console.error("Error closing audio context:", e));
+        }
+        
+        // Update visualization
+        visualizationContainer.classList.remove('active-visualization');
+        
+        // Reset flags
+        isListening = false;
+        isRecording = false;
+        
+        console.log("Continuous listening mode deactivated");
+    }
+    
+    // Start silence detection loop
+    function startSilenceDetection() {
+        // Buffer for frequency data
+        const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+        
+        // Set up interval to check for speech and silence
+        silenceDetectionInterval = setInterval(() => {
+            if (!isListening) {
+                clearInterval(silenceDetectionInterval);
+                return;
+            }
             
-            // Configure analyser
-            audioAnalyser.fftSize = 256;
-            audioAnalyser.smoothingTimeConstant = 0.8;
+            // Get current frequency data
+            audioAnalyser.getByteFrequencyData(dataArray);
             
-            // Connect the source to the analyser
-            audioSource.connect(audioAnalyser);
+            // Calculate average volume
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
             
-            // Reset detection state
-            consecutiveSilenceChecks = 0;
-            silenceStartTime = null;
-            speechDetected = false;
+            // Update visualization (actual audio level)
+            updateVisualization(average);
             
-            // Buffer for frequency data
-            const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-            
-            // Set up interval to check for silence
-            silenceDetectionInterval = setInterval(() => {
+            // User is speaking
+            if (average > SILENCE_THRESHOLD) {
+                // If not already recording, start a new recording
                 if (!isRecording) {
-                    clearInterval(silenceDetectionInterval);
-                    return;
+                    startNewRecording();
                 }
                 
-                // Get current frequency data
-                audioAnalyser.getByteFrequencyData(dataArray);
-                
-                // Calculate average volume
-                let sum = 0;
-                for (let i = 0; i < dataArray.length; i++) {
-                    sum += dataArray[i];
-                }
-                const average = sum / dataArray.length;
-                
-                // Update visualization (actual audio level)
-                updateVisualization(average);
-                
-                // Check if audio is above speech threshold (user is speaking)
-                if (average > SILENCE_THRESHOLD) {
-                    // User is speaking
-                    speechDetected = true;
-                    silenceStartTime = null;
-                    consecutiveSilenceChecks = 0;
-                } else {
-                    // User is not speaking (silence detected)
+                // Reset silence timer
+                silenceStartTime = null;
+                speechDetected = true;
+            } 
+            // User is silent
+            else {
+                // Only check for end of speech if we're recording and speech was detected
+                if (isRecording && speechDetected) {
+                    // If this is the start of silence
+                    if (silenceStartTime === null) {
+                        silenceStartTime = Date.now();
+                    }
                     
-                    // Only consider silence after speech has been detected
-                    if (speechDetected) {
-                        // If this is the start of silence
-                        if (silenceStartTime === null) {
-                            silenceStartTime = Date.now();
-                        }
+                    // Check if silence has lasted long enough
+                    const silenceDuration = Date.now() - silenceStartTime;
+                    if (silenceDuration >= SILENCE_DURATION) {
+                        console.log(`Cisza wykryta przez ${silenceDuration}ms. Kończę nagrywanie.`);
+                        stopCurrentRecording();
                         
-                        // Check how long the silence has lasted
-                        const silenceDuration = Date.now() - silenceStartTime;
-                        
-                        // If silence has lasted for the specified duration
-                        if (silenceDuration >= SILENCE_DURATION) {
-                            console.log(`Cisza wykryta przez ${silenceDuration}ms. Zatrzymuję nagrywanie.`);
-                            stopRecording();
-                        }
+                        // Reset for next recording
+                        speechDetected = false;
+                        silenceStartTime = null;
                     }
                 }
-            }, CHECK_INTERVAL);
+            }
+        }, CHECK_INTERVAL);
+    }
+    
+    // Start a new recording
+    function startNewRecording() {
+        // Reset recording state
+        audioChunks = [];
+        recordingId++;
+        const currentRecordingId = recordingId;
+        
+        // Setup mediaRecorder event handlers
+        mediaRecorder.onstart = () => {
+            console.log(`Nagrywanie #${currentRecordingId} rozpoczęte`);
+            isRecording = true;
+        };
+        
+        mediaRecorder.ondataavailable = (event) => {
+            audioChunks.push(event.data);
+        };
+        
+        mediaRecorder.onstop = () => {
+            console.log(`Nagrywanie #${currentRecordingId} zakończone`);
+            isRecording = false;
             
-            console.log("Detekcja ciszy uruchomiona");
-        } catch (error) {
-            console.error("Błąd podczas konfigurowania detekcji ciszy:", error);
+            // Create audio blob with specific type
+            const mimeType = getSupportedMimeType();
+            const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/mpeg' });
+            
+            console.log(`Nagranie #${currentRecordingId}: ${audioBlob.size} bajtów`);
+            
+            // Only process if it's not too small
+            if (audioBlob.size > 1000) {
+                processRecording(audioBlob, currentRecordingId);
+            } else {
+                console.log(`Nagranie #${currentRecordingId} zbyt krótkie, pomijam`);
+            }
+        };
+        
+        // Start recording in small chunks for more responsiveness
+        mediaRecorder.start(100);
+    }
+    
+    // Stop the current recording
+    function stopCurrentRecording() {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
         }
     }
     
+    // Process a recorded audio blob
+    async function processRecording(audioBlob, recordingId) {
+        const webhookUrl = localStorage.getItem('webhookUrl');
+        
+        if (!webhookUrl) {
+            showMessage('Proszę najpierw ustawić adres URL webhooka N8N w ustawieniach', 'error');
+            return;
+        }
+        
+        // Create a new conversation entry for this recording
+        const entryId = `entry-${recordingId}`;
+        addConversationEntry(entryId);
+        
+        try {
+            activeRequests++;
+            updateStatus();
+            
+            // Create form data for the API request
+            const formData = new FormData();
+            formData.append('audio', audioBlob, `recording-${recordingId}.mp3`);
+            formData.append('webhook_url', webhookUrl);
+            
+            // Send the audio to the backend
+            const response = await fetch('/api/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                let errorMessage = 'Transkrypcja nie powiodła się';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch (e) {
+                    console.error('Błąd parsowania odpowiedzi błędu:', e);
+                }
+                throw new Error(errorMessage);
+            }
+            
+            const data = await response.json();
+            
+            // Update the conversation entry with the transcription
+            updateConversationEntryWithTranscription(entryId, data.text);
+            
+            // Process the response from n8n
+            if (data.n8nResponse && data.n8nResponse.text) {
+                console.log(`Otrzymano natychmiastową odpowiedź dla nagrania #${recordingId}`);
+                handleN8nResponse(data.n8nResponse.text, entryId);
+            } else {
+                // Try to get the response via last-response-tts endpoint
+                try {
+                    const n8nResponse = await fetch('/api/last-response-tts', {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                        },
+                    });
+                    
+                    if (n8nResponse.ok) {
+                        const responseData = await n8nResponse.json();
+                        
+                        if (responseData.text && responseData.audio_url) {
+                            handleN8nResponse(responseData.text, entryId, responseData.audio_url);
+                        } else {
+                            handleDefaultResponse(entryId);
+                        }
+                    } else {
+                        handleDefaultResponse(entryId);
+                    }
+                } catch (error) {
+                    console.error(`Błąd podczas pobierania odpowiedzi dla nagrania #${recordingId}:`, error);
+                    handleDefaultResponse(entryId);
+                }
+            }
+        } catch (error) {
+            console.error(`Błąd podczas przetwarzania nagrania #${recordingId}:`, error);
+            updateConversationEntryWithError(entryId, error.message);
+        } finally {
+            activeRequests--;
+            updateStatus();
+        }
+    }
+    
+    // Handle n8n response
+    async function handleN8nResponse(text, entryId, audioUrl = null) {
+        try {
+            if (!audioUrl) {
+                // Convert text to speech
+                const response = await fetch('/api/speak', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Nie udało się przekonwertować tekstu na mowę');
+                }
+                
+                const responseData = await response.json();
+                audioUrl = responseData.audio_url;
+            }
+            
+            // Update conversation entry with response
+            updateConversationEntryWithResponse(entryId, text, audioUrl);
+            
+            // Play audio
+            playAudioResponse(audioUrl);
+            
+        } catch (error) {
+            console.error('Błąd podczas obsługi odpowiedzi:', error);
+            updateConversationEntryWithError(entryId, error.message);
+        }
+    }
+    
+    // Handle default response when n8n fails
+    function handleDefaultResponse(entryId) {
+        const defaultText = "Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?";
+        handleN8nResponse(defaultText, entryId);
+    }
+    
+    // Create a new conversation entry
+    function addConversationEntry(entryId) {
+        // Check if we have too many entries and remove the oldest
+        const entries = conversationContainer.querySelectorAll('.conversation-entry');
+        if (entries.length >= MAX_CONVERSATION_ENTRIES) {
+            conversationContainer.removeChild(entries[0]);
+        }
+        
+        // Create new entry
+        const entryHtml = `
+            <div id="${entryId}" class="conversation-entry">
+                <div class="user-message">
+                    <div class="message-status">Przetwarzanie...</div>
+                    <div class="message-content loading"></div>
+                </div>
+                <div class="assistant-message hidden">
+                    <div class="message-content"></div>
+                    <div class="audio-controls hidden">
+                        <button class="play-button btn-icon">
+                            <i class="fas fa-play"></i> Odtwórz
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Add to container - at the bottom
+        conversationContainer.insertAdjacentHTML('beforeend', entryHtml);
+        conversationContainer.scrollTop = conversationContainer.scrollHeight;
+        
+        // Ensure the container is visible
+        conversationContainer.classList.remove('hidden');
+    }
+    
+    // Update conversation entry with transcription
+    function updateConversationEntryWithTranscription(entryId, text) {
+        const entry = document.getElementById(entryId);
+        if (!entry) return;
+        
+        const messageStatus = entry.querySelector('.user-message .message-status');
+        const messageContent = entry.querySelector('.user-message .message-content');
+        
+        messageStatus.textContent = 'Ty:';
+        messageContent.textContent = text;
+        messageContent.classList.remove('loading');
+    }
+    
+    // Update conversation entry with response
+    function updateConversationEntryWithResponse(entryId, text, audioUrl) {
+        const entry = document.getElementById(entryId);
+        if (!entry) return;
+        
+        const assistantMessage = entry.querySelector('.assistant-message');
+        const messageContent = assistantMessage.querySelector('.message-content');
+        const audioControls = assistantMessage.querySelector('.audio-controls');
+        const playButton = audioControls.querySelector('.play-button');
+        
+        messageContent.textContent = text;
+        assistantMessage.classList.remove('hidden');
+        audioControls.classList.remove('hidden');
+        
+        // Set up play button
+        playButton.addEventListener('click', () => {
+            playAudioResponse(audioUrl);
+        });
+        
+        // Scroll to show the new content
+        conversationContainer.scrollTop = conversationContainer.scrollHeight;
+    }
+    
+    // Update conversation entry with error
+    function updateConversationEntryWithError(entryId, errorText) {
+        const entry = document.getElementById(entryId);
+        if (!entry) return;
+        
+        const messageStatus = entry.querySelector('.user-message .message-status');
+        const messageContent = entry.querySelector('.user-message .message-content');
+        
+        messageStatus.textContent = 'Błąd:';
+        messageStatus.style.color = 'red';
+        messageContent.textContent = errorText;
+        messageContent.classList.remove('loading');
+    }
+    
+    // Update the status message
+    function updateStatus() {
+        if (!isListening) {
+            statusMessage.textContent = 'Gotowy do słuchania';
+            return;
+        }
+        
+        if (activeRequests > 0) {
+            statusMessage.textContent = `Ciągłe słuchanie aktywne... (${activeRequests} ${activeRequests === 1 ? 'zapytanie' : 'zapytania'} w toku)`;
+        } else {
+            statusMessage.textContent = 'Ciągłe słuchanie aktywne...';
+        }
+    }
+    
+    // Update visualization based on actual audio levels
     function updateVisualization(volume) {
         const bars = document.querySelectorAll('.visualization-bar');
         if (!bars.length) return;
@@ -249,166 +527,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
         return null;
     }
-
-    // Stop recording function
-    function stopRecording() {
-        if (mediaRecorder && isRecording) {
-            mediaRecorder.stop();
-            isRecording = false;
-            
-            // Stop silence detection
-            clearInterval(silenceDetectionInterval);
-            
-            // Update UI
-            recordButton.classList.remove('recording');
-            statusMessage.textContent = 'Przetwarzanie...';
-            visualizationContainer.classList.remove('active-visualization');
-        }
-    }
-
-    // Transcribe audio function - sends audio to backend
-    async function transcribeAudio(audioBlob) {
-        const webhookUrl = localStorage.getItem('webhookUrl');
-        
-        if (!webhookUrl) {
-            showMessage('Proszę najpierw ustawić adres URL webhooka N8N w ustawieniach', 'error');
-            statusMessage.textContent = 'Gotowy do słuchania';
-            return;
-        }
-        
-        try {
-            // Create form data for the API request
-            const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.mp3'); 
-            formData.append('webhook_url', webhookUrl);
-            
-            // Send the audio to the backend
-            const response = await fetch('/api/transcribe', {
-                method: 'POST',
-                body: formData
-            });
-            
-            if (!response.ok) {
-                let errorMessage = 'Transkrypcja nie powiodła się';
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.detail || errorMessage;
-                } catch (e) {
-                    console.error('Błąd parsowania odpowiedzi błędu:', e);
-                }
-                throw new Error(errorMessage);
-            }
-            
-            const data = await response.json();
-            
-            // Display the transcription
-            transcriptionText.textContent = data.text;
-            transcriptionContainer.classList.remove('hidden');
-            
-            // Show success message
-            showMessage('Wysłano do przepływu pracy n8n! Oczekiwanie na odpowiedź...', 'success');
-            
-            // Start checking for response from n8n
-            waitingForResponse = true;
-            statusMessage.textContent = 'Oczekiwanie na odpowiedź n8n...';
-            
-            // Get the n8n response directly from the webhook response
-            if (data.n8nResponse && data.n8nResponse.text) {
-                console.log("Otrzymano natychmiastową odpowiedź z n8n:", data.n8nResponse.text);
-                receiveTextResponse(data.n8nResponse.text);
-            } else {
-                // Try to get the response via last-response-tts endpoint
-                try {
-                    const n8nResponse = await fetch('/api/last-response-tts', {
-                        method: 'GET',
-                        headers: {
-                            'Accept': 'application/json',
-                        },
-                    });
-                    
-                    if (n8nResponse.ok) {
-                        const responseData = await n8nResponse.json();
-                        
-                        if (responseData.text && responseData.audio_url) {
-                            displayAndPlayResponse(responseData.text, responseData.audio_url);
-                        } else {
-                            sendDefaultResponseRequest();
-                        }
-                    } else {
-                        sendDefaultResponseRequest();
-                    }
-                } catch (error) {
-                    console.error("Błąd podczas pobierania odpowiedzi n8n:", error);
-                    sendDefaultResponseRequest();
-                }
-            }
-        } catch (error) {
-            console.error('Błąd podczas transkrypcji:', error);
-            showMessage(`Błąd: ${error.message}`, 'error');
-            statusMessage.textContent = 'Gotowy do słuchania';
-        }
-    }
-    
-    // Function to send a default response request
-    async function sendDefaultResponseRequest() {
-        // Hardcoded Polish response that we saw in the logs
-        const defaultText = "Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?";
-        
-        receiveTextResponse(defaultText);
-    }
-    
-    // Function to handle receiving text responses from n8n
-    async function receiveTextResponse(text) {
-        try {
-            console.log("Przetwarzanie tekstu odpowiedzi n8n:", text);
-            
-            // Request TTS conversion from the backend
-            const response = await fetch('/api/speak', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ text: text })
-            });
-            
-            if (!response.ok) {
-                throw new Error('Nie udało się przekonwertować tekstu na mowę');
-            }
-            
-            // Parse the JSON response
-            const responseData = await response.json();
-            
-            if (responseData.text && responseData.audio_url) {
-                // Display and play the response
-                displayAndPlayResponse(responseData.text, responseData.audio_url);
-            } else {
-                throw new Error('Nieprawidłowy format odpowiedzi z usługi TTS');
-            }
-            
-        } catch (error) {
-            console.error('Błąd podczas odbierania odpowiedzi tekstowej:', error);
-            showMessage(`Błąd: ${error.message}`, 'error');
-            waitingForResponse = false;
-            statusMessage.textContent = 'Gotowy do słuchania';
-        }
-    }
-    
-    // Function to display and play a response
-    function displayAndPlayResponse(text, audioUrl) {
-        // Display the response text
-        responseText.textContent = text;
-        responseContainer.classList.remove('hidden');
-        
-        // Play the audio
-        playAudioResponse(audioUrl);
-        
-        // Reset waiting state
-        waitingForResponse = false;
-        statusMessage.textContent = 'Gotowy do słuchania';
-        
-        // Show success message
-        showMessage('Otrzymano odpowiedź z przepływu pracy n8n!', 'success');
-    }
     
     // Function to play audio response
     function playAudioResponse(audioUrl) {
@@ -428,11 +546,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Błąd odtwarzania dźwięku:', error);
                 showMessage('Błąd odtwarzania odpowiedzi dźwiękowej', 'error');
             });
-            
-        // Add event listener for when audio completes
-        audioPlayer.onended = () => {
-            console.log('Odtwarzanie dźwięku zakończone');
-        };
     }
 
     // Helper function to show messages
