@@ -33,50 +33,44 @@ document.addEventListener('DOMContentLoaded', () => {
         await playGreeting();
     });
 
-    // Poprawka: Przejmujemy obsługę kliknięcia przycisku w bezpieczniejszy sposób
-    // Usuwamy wszystkie obecne listenery
-    const newRecordButton = recordButton.cloneNode(true);
-    recordButton.parentNode.replaceChild(newRecordButton, recordButton);
+    // Store original click handler
+    const originalClickHandler = recordButton.onclick;
     
-    // Dodajemy naszego listenera
-    newRecordButton.addEventListener('click', async function(event) {
-        console.log("Przycisk nagrywania kliknięty");
-        
-        // Jeśli zatrzymujemy nagrywanie, po prostu wywołaj funkcję toggle
-        if (newRecordButton.classList.contains('recording')) {
-            console.log("Zatrzymuję nasłuchiwanie");
-            window.toggleContinuousListening();
-            return;
-        }
-        
-        // Jeśli rozpoczynamy nasłuchiwanie
-        try {
-            console.log("Odtwarzam powitanie...");
+    // Remove original click handler (we'll call it ourselves)
+    recordButton.onclick = null;
+    
+    // Add our custom click handler
+    recordButton.addEventListener('click', async function(event) {
+        // If we're starting listening (not stopping)
+        if (!recordButton.classList.contains('recording')) {
+            // Play greeting first
             statusMessage.textContent = 'Odtwarzanie powitania...';
-            const greetingSuccess = await playGreeting();
+            await playGreeting();
             
             console.log("Powitanie zakończone, uruchamiam nasłuchiwanie");
             statusMessage.textContent = 'Uruchamianie nasłuchiwania...';
             
-            // Bezpośrednio wywołaj funkcję nasłuchiwania - ważne, nie przez setTimeout
+            // Use the global function if available
             if (typeof window.toggleContinuousListening === 'function') {
-                console.log("Wywołuję toggleContinuousListening");
                 window.toggleContinuousListening();
             } else {
                 console.error("Funkcja toggleContinuousListening nie jest dostępna!");
                 showMessage('Błąd: Nie można uruchomić nasłuchiwania', 'error');
             }
-        } catch (error) {
-            console.error("Błąd podczas obsługi przycisku nagrywania:", error);
-            statusMessage.textContent = 'Gotowy do słuchania';
-            showMessage('Błąd podczas uruchamiania nasłuchiwania', 'error');
+        } else {
+            // If stopping listening, just toggle continuous listening
+            if (typeof window.toggleContinuousListening === 'function') {
+                window.toggleContinuousListening();
+            } else {
+                console.error("Funkcja toggleContinuousListening nie jest dostępna!");
+                showMessage('Błąd: Nie można zatrzymać nasłuchiwania', 'error');
+            }
         }
     });
 
     // Function to play the greeting
     async function playGreeting() {
         const greetingText = localStorage.getItem('greetingText') || DEFAULT_GREETING;
-        let isTestButton = false;
         
         try {
             console.log("Rozpoczynam odtwarzanie powitania...");
@@ -85,10 +79,8 @@ document.addEventListener('DOMContentLoaded', () => {
             greetingPlayer.pause();
             greetingPlayer.currentTime = 0;
             
-            // Sprawdź, czy funkcja została wywołana z przycisku testowego
-            isTestButton = document.activeElement === testGreetingButton;
-            
-            if (isTestButton) {
+            // Update test button state if applicable
+            if (document.activeElement === testGreetingButton) {
                 testGreetingButton.disabled = true;
                 testGreetingButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generowanie...';
             }
@@ -150,33 +142,19 @@ document.addEventListener('DOMContentLoaded', () => {
             showMessage('Błąd odtwarzania powitania: ' + error.message, 'error');
             return false;
         } finally {
-            if (isTestButton) {
+            if (document.activeElement === testGreetingButton) {
                 testGreetingButton.disabled = false;
                 testGreetingButton.innerHTML = '<i class="fas fa-play"></i> Testuj powitanie';
             }
         }
     }
     
-    // Add this function to window object for other scripts to use
-    window.playGreeting = playGreeting;
-    
-    // Helper function to show messages (uses the same function as in app.js)
+    // Helper function to show messages (uses the global function from app.js)
     function showMessage(message, type) {
-        const messageContainer = document.getElementById('message-container');
-        const messageText = document.getElementById('message-text');
-        
-        if (!messageContainer || !messageText) {
-            console.error('Elementy komunikatów nie zostały znalezione');
-            return;
+        if (typeof window.showMessage === 'function') {
+            window.showMessage(message, type);
+        } else {
+            console.log(`${type}: ${message}`);
         }
-        
-        messageText.textContent = message;
-        messageContainer.classList.remove('hidden', 'success', 'error');
-        messageContainer.classList.add(type);
-        
-        // Auto-hide after 5 seconds
-        setTimeout(() => {
-            messageContainer.classList.add('hidden');
-        }, 5000);
     }
 });
