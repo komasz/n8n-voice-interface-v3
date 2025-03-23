@@ -33,47 +33,67 @@ document.addEventListener('DOMContentLoaded', () => {
         await playGreeting();
     });
 
-    // Add event listener to record button to play greeting before starting to listen
-    const originalRecordButtonClickHandler = recordButton.onclick;
-    recordButton.onclick = null; // Remove existing handler
+    // Poprawka: Przejmujemy obsługę kliknięcia przycisku w bezpieczniejszy sposób
+    // Usuwamy wszystkie obecne listenery
+    const newRecordButton = recordButton.cloneNode(true);
+    recordButton.parentNode.replaceChild(newRecordButton, recordButton);
     
-    recordButton.addEventListener('click', async function(event) {
-        // If we're starting listening (not stopping)
-        if (!recordButton.classList.contains('recording')) {
-            // Play greeting first
+    // Dodajemy naszego listenera
+    newRecordButton.addEventListener('click', async function(event) {
+        console.log("Przycisk nagrywania kliknięty");
+        
+        // Jeśli zatrzymujemy nagrywanie, po prostu wywołaj funkcję toggle
+        if (newRecordButton.classList.contains('recording')) {
+            console.log("Zatrzymuję nasłuchiwanie");
+            window.toggleContinuousListening();
+            return;
+        }
+        
+        // Jeśli rozpoczynamy nasłuchiwanie
+        try {
+            console.log("Odtwarzam powitanie...");
             statusMessage.textContent = 'Odtwarzanie powitania...';
-            await playGreeting();
+            const greetingSuccess = await playGreeting();
             
-            // Wait for a small delay after greeting completes
-            setTimeout(() => {
-                statusMessage.textContent = 'Uruchamianie nasłuchiwania...';
-                if (typeof window.toggleContinuousListening === 'function') {
-                    window.toggleContinuousListening();
-                } else if (typeof originalRecordButtonClickHandler === 'function') {
-                    originalRecordButtonClickHandler.call(this, event);
-                }
-            }, 500); // Small delay after greeting
-        } else {
-            // If stopping listening, just call the original handler
+            console.log("Powitanie zakończone, uruchamiam nasłuchiwanie");
+            statusMessage.textContent = 'Uruchamianie nasłuchiwania...';
+            
+            // Bezpośrednio wywołaj funkcję nasłuchiwania - ważne, nie przez setTimeout
             if (typeof window.toggleContinuousListening === 'function') {
+                console.log("Wywołuję toggleContinuousListening");
                 window.toggleContinuousListening();
-            } else if (typeof originalRecordButtonClickHandler === 'function') {
-                originalRecordButtonClickHandler.call(this, event);
+            } else {
+                console.error("Funkcja toggleContinuousListening nie jest dostępna!");
+                showMessage('Błąd: Nie można uruchomić nasłuchiwania', 'error');
             }
+        } catch (error) {
+            console.error("Błąd podczas obsługi przycisku nagrywania:", error);
+            statusMessage.textContent = 'Gotowy do słuchania';
+            showMessage('Błąd podczas uruchamiania nasłuchiwania', 'error');
         }
     });
 
     // Function to play the greeting
     async function playGreeting() {
         const greetingText = localStorage.getItem('greetingText') || DEFAULT_GREETING;
+        let isTestButton = false;
         
         try {
+            console.log("Rozpoczynam odtwarzanie powitania...");
+            
             // Stop any current playback
             greetingPlayer.pause();
             greetingPlayer.currentTime = 0;
             
-            testGreetingButton.disabled = true;
-            testGreetingButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generowanie...';
+            // Sprawdź, czy funkcja została wywołana z przycisku testowego
+            isTestButton = document.activeElement === testGreetingButton;
+            
+            if (isTestButton) {
+                testGreetingButton.disabled = true;
+                testGreetingButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generowanie...';
+            }
+            
+            console.log("Wysyłam żądanie do API TTS z tekstem:", greetingText);
             
             // Send request to get TTS for the greeting
             const response = await fetch('/api/speak', {
@@ -85,10 +105,13 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             if (!response.ok) {
+                const errorText = await response.text();
+                console.error("Błąd API TTS:", response.status, errorText);
                 throw new Error('Nie udało się wygenerować powitania głosowego');
             }
             
             const data = await response.json();
+            console.log("Otrzymano odpowiedź TTS:", data);
             
             if (!data.audio_url) {
                 throw new Error('Brak URL audio w odpowiedzi');
@@ -99,23 +122,38 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? data.audio_url 
                 : window.location.origin + data.audio_url;
                 
+            console.log("URL audio powitania:", audioUrl);
             greetingPlayer.src = audioUrl;
             
             // Wait for the audio to play completely
+            console.log("Rozpoczynam odtwarzanie audio...");
             await new Promise((resolve, reject) => {
-                greetingPlayer.onended = resolve;
-                greetingPlayer.onerror = reject;
-                greetingPlayer.play().catch(reject);
+                greetingPlayer.onended = () => {
+                    console.log("Odtwarzanie powitania zakończone");
+                    resolve();
+                };
+                greetingPlayer.onerror = (e) => {
+                    console.error("Błąd odtwarzania audio:", e);
+                    reject(new Error("Błąd odtwarzania audio"));
+                };
+                
+                greetingPlayer.play().catch(error => {
+                    console.error("Błąd podczas uruchamiania odtwarzania:", error);
+                    reject(error);
+                });
             });
             
+            console.log("Funkcja playGreeting zakończona pomyślnie");
             return true;
         } catch (error) {
             console.error('Błąd odtwarzania powitania:', error);
             showMessage('Błąd odtwarzania powitania: ' + error.message, 'error');
             return false;
         } finally {
-            testGreetingButton.disabled = false;
-            testGreetingButton.innerHTML = '<i class="fas fa-play"></i> Testuj powitanie';
+            if (isTestButton) {
+                testGreetingButton.disabled = false;
+                testGreetingButton.innerHTML = '<i class="fas fa-play"></i> Testuj powitanie';
+            }
         }
     }
     
