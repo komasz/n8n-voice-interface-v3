@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const messageContainer = document.getElementById('message-container');
     const messageText = document.getElementById('message-text');
     const webhookUrlInput = document.getElementById('webhook-url');
+    const greetingTextInput = document.getElementById('greeting-text');
     const saveSettingsButton = document.getElementById('save-settings');
     const responseContainer = document.getElementById('response-container');
     const responseText = document.getElementById('response-text');
@@ -23,15 +24,28 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Load saved webhook URL from localStorage
     webhookUrlInput.value = localStorage.getItem('webhookUrl') || '';
+    
+    // Load saved greeting text from localStorage
+    greetingTextInput.value = localStorage.getItem('greetingText') || 'Cześć jestem super agent!';
 
     // Save webhook URL to localStorage
     saveSettingsButton.addEventListener('click', () => {
         const webhookUrl = webhookUrlInput.value.trim();
+        const greetingText = greetingTextInput.value.trim();
+        
+        // Zapisz oba ustawienia
         if (webhookUrl) {
             localStorage.setItem('webhookUrl', webhookUrl);
+        }
+        
+        if (greetingText) {
+            localStorage.setItem('greetingText', greetingText);
+        }
+        
+        if (webhookUrl || greetingText) {
             showMessage('Ustawienia zapisane pomyślnie!', 'success');
         } else {
-            showMessage('Proszę wprowadzić poprawny adres URL webhooka', 'error');
+            showMessage('Proszę wprowadzić poprawne wartości ustawień', 'error');
         }
     });
 
@@ -73,6 +87,58 @@ document.addEventListener('DOMContentLoaded', () => {
     // Handle toggle button click - start/stop continuous listening
     recordButton.addEventListener('click', toggleContinuousListening);
 
+    // Funkcja odtwarzania powitania przy użyciu TTS
+    async function playGreeting() {
+        try {
+            // Pobierz tekst powitania z localStorage lub użyj domyślnego
+            const greetingText = localStorage.getItem('greetingText') || 'Cześć jestem super agent!';
+            
+            // Wyświetl status
+            statusMessage.textContent = 'Odtwarzam powitanie...';
+            
+            // Konwertuj tekst na mowę przy użyciu istniejącego API
+            const response = await fetch('/api/speak', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ text: greetingText })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Nie udało się wygenerować powitania');
+            }
+            
+            const responseData = await response.json();
+            const audioUrl = responseData.audio_url;
+            
+            // Utwórz nowy odtwarzacz audio (nie używać głównego audioPlayer, 
+            // który jest wykorzystywany do odpowiedzi)
+            const greetingPlayer = new Audio();
+            greetingPlayer.src = audioUrl.startsWith('http') ? audioUrl : window.location.origin + audioUrl;
+            
+            // Poczekaj na załadowanie
+            await new Promise((resolve) => {
+                greetingPlayer.oncanplaythrough = resolve;
+                greetingPlayer.load();
+            });
+            
+            // Odtwórz powitanie i poczekaj na zakończenie
+            await new Promise((resolve) => {
+                greetingPlayer.onended = resolve;
+                greetingPlayer.play();
+            });
+            
+            // Aktualizuj status po odtworzeniu
+            statusMessage.textContent = 'Ciągłe słuchanie aktywne...';
+            return true;
+        } catch (error) {
+            console.error('Błąd podczas odtwarzania powitania:', error);
+            // Nie przerywaj uruchamiania słuchania, nawet jeśli powitanie się nie powiodło
+            return false;
+        }
+    }
+
     // Toggle continuous listening mode
     async function toggleContinuousListening() {
         if (isListening) {
@@ -84,14 +150,26 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             // Start listening
             try {
+                // Najpierw odtwórz powitanie - button jest już wyłączony
+                recordButton.disabled = true;
+                recordButton.title = "Odtwarzam powitanie...";
+                
+                // Odtwórz powitanie
+                await playGreeting();
+                
+                // Po powitaniu rozpocznij słuchanie
                 await startListening();
                 recordButton.classList.add('recording');
                 recordButton.title = "Zatrzymaj ciągłe słuchanie";
                 statusMessage.textContent = 'Ciągłe słuchanie aktywne...';
                 showMessage('Ciągłe słuchanie aktywne. Zacznij mówić, aby wysłać zapytanie.', 'success');
+                
+                // Włącz przycisk
+                recordButton.disabled = false;
             } catch (error) {
                 console.error('Błąd podczas uruchamiania słuchania:', error);
                 showMessage(`Nie można uzyskać dostępu do mikrofonu: ${error.message}`, 'error');
+                recordButton.disabled = false;
             }
         }
     }
