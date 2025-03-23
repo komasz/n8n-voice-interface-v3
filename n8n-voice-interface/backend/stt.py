@@ -37,14 +37,19 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
         content_type = audio_file.content_type
         logger.info(f"File from request: {audio_file.filename}, content-type: {content_type}")
 
+        # Extract base content type without codecs info
+        base_content_type = content_type.split(';')[0].strip()
+        
         # Extract file extension from content type
         file_extension = ".mp3"  # Default
-        if content_type == "audio/webm":
+        if "webm" in base_content_type:
             file_extension = ".webm"
-        elif content_type == "audio/wav":
+        elif "wav" in base_content_type:
             file_extension = ".wav"
-        elif content_type == "audio/ogg":
+        elif "ogg" in base_content_type:
             file_extension = ".ogg"
+            
+        logger.info(f"Using file extension: {file_extension} for content type: {base_content_type}")
 
         # Save the uploaded file to a temporary location with correct extension
         temp_dir = tempfile.gettempdir()
@@ -63,16 +68,16 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
             "Authorization": f"Bearer {OPENAI_API_KEY}"
         }
 
-        # Prepare the file and form data, using the actual content type
+        # Prepare the file and form data, using the base content type without codec info
         with open(temp_file_path, "rb") as file:
             files = {
-                "file": (temp_file_name, file, content_type),
+                "file": (temp_file_name, file, base_content_type),
                 "model": (None, STT_MODEL),
                 "language": (None, "pl")  # Force Polish language recognition
             }
             
             # Make the API request
-            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
+            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL} with content type: {base_content_type}")
             response = requests.post(
                 API_URL,
                 headers=headers,
