@@ -1,0 +1,14 @@
+[workflows]
+runButton = "Run"
+
+[[workflows.workflow]]
+name = "Run"
+author = 38859788
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 replit-main.py"
+
+[nix]
+channel = "stable-24_05"
