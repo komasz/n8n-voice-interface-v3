@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+from typing import Optional
 from fastapi import FastAPI, UploadFile, Form, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +36,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Store the last n8n response for retrieval
+last_n8n_response = None
+last_tts_file_path = None
+
 # Model for receiving text from n8n
 class TextRequest(BaseModel):
     text: str
@@ -49,6 +54,8 @@ async def transcribe_endpoint(
     """
     Process audio, transcribe it, and send it to the n8n webhook.
     """
+    global last_n8n_response
+    
     try:
         logger.info(f"Received audio file: {audio.filename}, size: {audio.size} bytes")
         
@@ -62,16 +69,29 @@ async def transcribe_endpoint(
         transcribed_text = transcription_result["text"]
         logger.info(f"Transcription successful: {transcribed_text[:50]}...")
         
-        # Send to n8n webhook in the background
-        if background_tasks:
-            background_tasks.add_task(
-                send_to_n8n, 
-                webhook_url, 
-                {"transcription": transcribed_text}
-            )
-        else:
-            # If no background tasks available, send synchronously
-            await send_to_n8n(webhook_url, {"transcription": transcribed_text})
+        # Send to n8n webhook and get response
+        n8n_response = await send_to_n8n(webhook_url, {"transcription": transcribed_text})
+        
+        # Store the n8n response globally
+        if isinstance(n8n_response, dict) and "text" in n8n_response:
+            last_n8n_response = n8n_response
+            logger.info(f"Stored n8n response: {n8n_response['text'][:50]}...")
+            
+            # Generate TTS for the response right away to have it ready
+            if background_tasks:
+                background_tasks.add_task(
+                    generate_tts_for_response,
+                    n8n_response["text"]
+                )
+            else:
+                await generate_tts_for_response(n8n_response["text"])
+                
+            # Return both the transcription and the n8n response
+            return {
+                "success": True,
+                "text": transcribed_text,
+                "n8nResponse": n8n_response
+            }
         
         return {
             "success": True,
@@ -82,18 +102,83 @@ async def transcribe_endpoint(
         logger.error(f"Error processing request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+# Function to generate TTS for n8n response
+async def generate_tts_for_response(text: str):
+    """
+    Generate TTS for the n8n response and store the file path.
+    """
+    global last_tts_file_path
+    
+    try:
+        file_path = await text_to_speech(text)
+        last_tts_file_path = file_path
+        logger.info(f"Generated TTS for n8n response, saved to: {file_path}")
+    except Exception as e:
+        logger.error(f"Error generating TTS for n8n response: {str(e)}")
+
+# Endpoint to get the last n8n response
+@app.post("/api/get-n8n-response")
+async def get_n8n_response(request: dict):
+    """
+    Get the last n8n response, including webhook_url for verification.
+    """
+    global last_n8n_response
+    
+    if not last_n8n_response:
+        raise HTTPException(status_code=404, detail="No n8n response available")
+    
+    return last_n8n_response
+
+# Endpoint to get the last TTS file
+@app.get("/api/last-response-tts")
+async def get_last_response_tts():
+    """
+    Get the TTS audio file for the last n8n response.
+    """
+    global last_tts_file_path, last_n8n_response
+    
+    if not last_tts_file_path or not os.path.exists(last_tts_file_path):
+        if last_n8n_response and "text" in last_n8n_response:
+            # Try to generate the TTS file if it doesn't exist
+            try:
+                last_tts_file_path = await text_to_speech(last_n8n_response["text"])
+            except Exception as e:
+                logger.error(f"Error generating TTS file: {str(e)}")
+                raise HTTPException(status_code=500, detail="Could not generate TTS file")
+        else:
+            raise HTTPException(status_code=404, detail="No TTS file available")
+    
+    # Get the text content for the header
+    text_content = last_n8n_response["text"] if last_n8n_response and "text" in last_n8n_response else ""
+    
+    return FileResponse(
+        path=last_tts_file_path,
+        media_type="audio/mpeg",
+        filename="response.mp3",
+        headers={"X-Text-Content": text_content}
+    )
+
 # New endpoint to receive text from n8n and convert to speech
 @app.post("/api/speak")
 async def speak_endpoint(request: TextRequest):
     """
-    Receive text from n8n and convert it to speech.
+    Receive text and convert it to speech.
     """
+    global last_n8n_response
+    
     try:
         text = request.text
         logger.info(f"Received text for TTS: {text[:50]}...")
         
+        # Store this as the last n8n response for convenience
+        last_n8n_response = {"text": text}
+        
         # Convert text to speech
         audio_path = await text_to_speech(text)
+        
+        # Store the TTS file path
+        global last_tts_file_path
+        last_tts_file_path = audio_path
         
         # Return the audio file
         return FileResponse(
@@ -135,11 +220,17 @@ async def webhook_endpoint(
             transcribed_text = transcription_result["text"]
             
             # Send to n8n webhook
-            await send_to_n8n(webhook_url, {"transcription": transcribed_text})
+            n8n_response = await send_to_n8n(webhook_url, {"transcription": transcribed_text})
+            
+            # Store the response globally
+            global last_n8n_response
+            if isinstance(n8n_response, dict) and "text" in n8n_response:
+                last_n8n_response = n8n_response
             
             return {
                 "success": True,
-                "text": transcribed_text
+                "text": transcribed_text,
+                "n8nResponse": n8n_response if isinstance(n8n_response, dict) else None
             }
             
         else:
@@ -149,8 +240,16 @@ async def webhook_endpoint(
             if "text" not in body:
                 raise HTTPException(status_code=400, detail="Missing 'text' field in request body")
             
+            # Store as last n8n response
+            global last_n8n_response
+            last_n8n_response = {"text": body["text"]}
+            
             # Convert text to speech
             audio_path = await text_to_speech(body["text"])
+            
+            # Store the TTS file path
+            global last_tts_file_path
+            last_tts_file_path = audio_path
             
             # Return the audio file
             return FileResponse(
