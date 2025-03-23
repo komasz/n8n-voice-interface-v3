@@ -1,9 +1,10 @@
 import logging
 import os
 import json
+import base64
 from typing import Optional
 from fastapi import FastAPI, UploadFile, Form, HTTPException, BackgroundTasks, Request, Response
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -43,6 +44,11 @@ last_tts_file_path = None
 # Model for receiving text from n8n
 class TextRequest(BaseModel):
     text: str
+
+# Response model for combined text and audio
+class AudioTextResponse(BaseModel):
+    text: str
+    audio_url: str
 
 # API endpoint for transcription
 @app.post("/api/transcribe")
@@ -127,7 +133,7 @@ async def get_n8n_response(request: dict):
     
     return last_n8n_response
 
-# Endpoint to get the last TTS file
+# Modified endpoint to get the last TTS file with text in the response body, not header
 @app.get("/api/last-response-tts")
 async def get_last_response_tts():
     """
@@ -146,15 +152,39 @@ async def get_last_response_tts():
         else:
             raise HTTPException(status_code=404, detail="No TTS file available")
     
-    # Get the text content for the header
+    # Get the text content
     text_content = last_n8n_response["text"] if last_n8n_response and "text" in last_n8n_response else ""
     
-    return FileResponse(
-        path=last_tts_file_path,
-        media_type="audio/mpeg",
-        filename="response.mp3",
-        headers={"X-Text-Content": text_content}
-    )
+    # Create a unique audio URL using the file path
+    audio_url = f"/api/audio/{os.path.basename(last_tts_file_path)}"
+    
+    # Return JSON with text and audio URL
+    return {
+        "text": text_content,
+        "audio_url": audio_url
+    }
+
+# Endpoint to serve audio files by filename
+@app.get("/api/audio/{filename}")
+async def get_audio_file(filename: str):
+    """
+    Serve an audio file by its filename.
+    """
+    global last_tts_file_path
+    
+    if not last_tts_file_path or not os.path.exists(last_tts_file_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    # Simple validation to prevent path traversal
+    if os.path.basename(last_tts_file_path) != filename:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Stream the file content directly
+    def iterfile():
+        with open(last_tts_file_path, mode="rb") as file_like:
+            yield from file_like
+    
+    return StreamingResponse(iterfile(), media_type="audio/mpeg")
 
 # New endpoint to receive text from n8n and convert to speech
 @app.post("/api/speak")
@@ -177,13 +207,14 @@ async def speak_endpoint(request: TextRequest):
         # Store the TTS file path
         last_tts_file_path = audio_path
         
-        # Return the audio file
-        return FileResponse(
-            path=audio_path, 
-            media_type="audio/mpeg", 
-            filename="response.mp3",
-            headers={"X-Text-Content": text}
-        )
+        # Create a unique audio URL using the file path
+        audio_url = f"/api/audio/{os.path.basename(audio_path)}"
+        
+        # Return JSON with text and audio URL instead of FileResponse
+        return {
+            "text": text,
+            "audio_url": audio_url
+        }
     
     except Exception as e:
         logger.error(f"Error processing speak request: {str(e)}", exc_info=True)
@@ -246,13 +277,14 @@ async def webhook_endpoint(
             # Store the TTS file path
             last_tts_file_path = audio_path
             
-            # Return the audio file
-            return FileResponse(
-                path=audio_path, 
-                media_type="audio/mpeg", 
-                filename="response.mp3",
-                headers={"X-Text-Content": body["text"]}
-            )
+            # Create a unique audio URL using the file path
+            audio_url = f"/api/audio/{os.path.basename(audio_path)}"
+            
+            # Return JSON with text and audio URL
+            return {
+                "text": body["text"],
+                "audio_url": audio_url
+            }
     
     except Exception as e:
         logger.error(f"Error processing webhook request: {str(e)}", exc_info=True)
