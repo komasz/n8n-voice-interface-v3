@@ -16,36 +16,38 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 async def transcribe_audio(audio_file: UploadFile) -> dict:
     """
     Transcribe audio using OpenAI's gpt-4o-transcribe model.
-    
+
     Args:
         audio_file: The uploaded audio file
-    
+
     Returns:
         A dictionary containing the transcription text
     """
     if not OPENAI_API_KEY:
+        logger.error("OpenAI API key not found in environment")
         raise HTTPException(
             status_code=500, 
             detail="OPENAI_API_KEY environment variable not set"
         )
-    
+    logger.info("OpenAI API key found in environment")
+
     try:
         # Save the uploaded file to a temporary location
         temp_dir = tempfile.gettempdir()
         temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{audio_file.filename}")
-        
+
         with open(temp_file_path, "wb") as temp_file:
             # Read the file in chunks
             content = await audio_file.read()
             temp_file.write(content)
-        
+
         logger.info(f"Saved audio to temporary file: {temp_file_path}")
-        
+
         # Set up the request headers
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}"
         }
-        
+
         # Prepare the file and form data
         with open(temp_file_path, "rb") as file:
             files = {
@@ -53,7 +55,7 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
                 "model": (None, STT_MODEL),
                 "response_format": (None, "json")
             }
-            
+
             # Make the API request
             logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
             response = requests.post(
@@ -61,18 +63,18 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
                 headers=headers,
                 files=files
             )
-        
+
         # Clean up temporary file
         try:
             os.remove(temp_file_path)
             logger.info(f"Removed temporary file: {temp_file_path}")
         except Exception as e:
             logger.warning(f"Failed to remove temporary file: {str(e)}")
-        
+
         # Check for errors
         if response.status_code != 200:
             logger.error(f"OpenAI API error: {response.status_code} - {response.text}")
-            
+
             # Attempt to parse the error
             error_msg = "Transcription failed"
             try:
@@ -81,18 +83,18 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
                     error_msg = error_data["error"]["message"]
             except:
                 pass
-            
+
             raise HTTPException(status_code=500, detail=error_msg)
-        
+
         # Parse the response
         result = response.json()
         logger.info(f"Transcription successful: {result.get('text', '')[:50]}...")
-        
+
         return result
-    
+
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
-        
+
         logger.error(f"Error during transcription: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
