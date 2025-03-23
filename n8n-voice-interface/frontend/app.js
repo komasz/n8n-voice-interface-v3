@@ -567,15 +567,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Find supported MIME type with optimal audio quality
     function getSupportedMimeType() {
-        // Preferencja dla formatów obsługiwanych przez API OpenAI
+        // Preferencja dla formatów obsługiwanych przez OpenAI
         const mimeTypes = [
-            'audio/wav',              // Najlepsza kompatybilność z OpenAI
-            'audio/mpeg',             // MP3 - dobra kompatybilność
-            'audio/mp3',              // Alternatywny MP3
-            'audio/webm;codecs=opus', // WebM z kodekiem Opus (wysoka jakość)
-            'audio/webm',             // Standardowy WebM
-            'audio/ogg;codecs=opus',  // Ogg z kodekiem Opus
-            'audio/ogg'               // Standardowy Ogg
+            'audio/wav',              // Najlepsza kompatybilność po konwersji
+            'audio/webm;codecs=opus', // Dobra jakość głosu
+            'audio/mpeg',             // MP3
+            'audio/mp3',              
+            'audio/webm',             
+            'audio/ogg;codecs=opus',  
+            'audio/ogg'               
         ];
         
         for (const type of mimeTypes) {
