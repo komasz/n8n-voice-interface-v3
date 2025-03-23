@@ -164,6 +164,25 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log("Continuous listening mode deactivated");
     }
     
+    // Funkcja do zatrzymywania odtwarzania audio
+    function stopAudioPlayback() {
+        if (audioPlayer && !audioPlayer.paused) {
+            console.log('Przerwanie odtwarzania - wykryto mowę użytkownika');
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
+            
+            // Opcjonalnie: pokaż krótki komunikat
+            showMessage('Przerwano odtwarzanie, słucham...', 'success');
+            
+            // Znajdź i zaktualizuj wszystkie przyciski odtwarzania
+            const playButtons = document.querySelectorAll('.play-button');
+            playButtons.forEach(button => {
+                button.disabled = false;
+                button.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+            });
+        }
+    }
+    
     // Start silence detection loop
     function startSilenceDetection() {
         // Buffer for frequency data
@@ -191,6 +210,11 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // User is speaking
             if (average > SILENCE_THRESHOLD) {
+                // Jeśli odtwarzane jest audio, przerwij odtwarzanie
+                if (audioPlayer && !audioPlayer.paused) {
+                    stopAudioPlayback();
+                }
+                
                 // If not already recording, start a new recording
                 if (!isRecording) {
                     startNewRecording();
@@ -455,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Set up play button
         playButton.addEventListener('click', () => {
-            playAudioResponse(audioUrl);
+            playAudioResponse(audioUrl, playButton);
         });
         
         // Scroll to show the new content
@@ -529,7 +553,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // Function to play audio response
-    function playAudioResponse(audioUrl) {
+    function playAudioResponse(audioUrl, buttonElement = null) {
         // Stop any currently playing audio
         audioPlayer.pause();
         audioPlayer.currentTime = 0;
@@ -540,11 +564,30 @@ document.addEventListener('DOMContentLoaded', () => {
         // Set the new audio source
         audioPlayer.src = absoluteUrl;
         
+        // Update button state if provided
+        if (buttonElement) {
+            buttonElement.disabled = true;
+            buttonElement.innerHTML = '<i class="fas fa-volume-up"></i> Odtwarzanie...';
+            
+            // Reset button when playback ends
+            audioPlayer.onended = () => {
+                console.log('Odtwarzanie dźwięku zakończone');
+                buttonElement.disabled = false;
+                buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+            };
+        }
+        
         // Play the audio
         audioPlayer.play()
             .catch(error => {
                 console.error('Błąd odtwarzania dźwięku:', error);
                 showMessage('Błąd odtwarzania odpowiedzi dźwiękowej', 'error');
+                
+                // Reset button on error
+                if (buttonElement) {
+                    buttonElement.disabled = false;
+                    buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+                }
             });
     }
 
