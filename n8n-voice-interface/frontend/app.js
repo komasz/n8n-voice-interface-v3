@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Status tracking
     let waitingForResponse = false;
-    let responseCheckInterval = null;
     
     // Load saved webhook URL from localStorage
     webhookUrlInput.value = localStorage.getItem('webhookUrl') || '';
@@ -36,17 +35,19 @@ document.addEventListener('DOMContentLoaded', () => {
     let audioChunks = [];
     let isRecording = false;
     
-    // Variables for voice activity detection
+    // Variables for silence detection
     let audioContext;
-    let analyser;
-    let silenceStart = null;
-    let silenceThreshold = 15;
-    let silenceTimeout = 1500;
+    let audioAnalyser;
     let audioSource;
-    let volumeDataArray;
+    let silenceDetectionInterval;
+    
+    // Silence detection settings
+    const SILENCE_THRESHOLD = 15; // Threshold below which is considered silence
+    const SILENCE_DURATION = 1500; // 1.5 seconds of silence to trigger stop
+    const CHECK_INTERVAL = 100; // Check every 100ms
+    let consecutiveSilenceChecks = 0;
+    let silenceStartTime = null;
     let speechDetected = false;
-    let speechStartTime = null;
-    let volumeCheckInterval = null;
 
     // Check if browser supports required APIs
     if (!navigator.mediaDevices || !window.MediaRecorder) {
@@ -86,14 +87,12 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             mediaRecorder.addEventListener('stop', () => {
-                // Clean up voice activity detection
-                if (volumeCheckInterval) {
-                    clearInterval(volumeCheckInterval);
-                    volumeCheckInterval = null;
-                }
+                // Stop silence detection
+                clearInterval(silenceDetectionInterval);
                 
-                if (audioContext) {
-                    audioContext.close().catch(err => console.error('Error closing audio context:', err));
+                // Close audio context
+                if (audioContext && audioContext.state !== 'closed') {
+                    audioContext.close().catch(e => console.error("Error closing audio context:", e));
                 }
                 
                 // Create audio blob with specific type
@@ -104,18 +103,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     size: audioBlob.size
                 });
                 
-                transcribeAudio(audioBlob);
+                // Only process audio if it has some content
+                if (audioBlob.size > 100) {
+                    transcribeAudio(audioBlob);
+                } else {
+                    console.log("Audio too short, skipping transcription");
+                    statusMessage.textContent = 'Gotowy do słuchania';
+                    showMessage('Nagranie było zbyt krótkie', 'error');
+                }
                 
                 // Stop all tracks in the stream to release the microphone
                 stream.getTracks().forEach(track => track.stop());
             });
             
             // Start recording
-            mediaRecorder.start();
+            mediaRecorder.start(10); // Capture in 10ms chunks for more responsive stopping
             isRecording = true;
             
-            // Setup simple voice activity detection
-            setupVoiceActivityDetection(stream);
+            // Setup simple silence detection
+            setupSilenceDetection(stream);
             
             // Update UI
             recordButton.classList.add('recording');
@@ -130,91 +136,94 @@ document.addEventListener('DOMContentLoaded', () => {
             showMessage(`Nie można uzyskać dostępu do mikrofonu: ${error.message}`, 'error');
         }
     }
-
-    // Setup simple voice activity detection
-    function setupVoiceActivityDetection(stream) {
+    
+    function setupSilenceDetection(stream) {
         try {
+            // Create audio context
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             audioSource = audioContext.createMediaStreamSource(stream);
-            analyser = audioContext.createAnalyser();
+            audioAnalyser = audioContext.createAnalyser();
             
-            analyser.fftSize = 256;
-            analyser.minDecibels = -90;
-            analyser.maxDecibels = -10;
-            analyser.smoothingTimeConstant = 0.85;
+            // Configure analyser
+            audioAnalyser.fftSize = 256;
+            audioAnalyser.smoothingTimeConstant = 0.8;
             
-            audioSource.connect(analyser);
+            // Connect the source to the analyser
+            audioSource.connect(audioAnalyser);
             
-            volumeDataArray = new Uint8Array(analyser.frequencyBinCount);
-            
-            // Reset state
-            silenceStart = null;
+            // Reset detection state
+            consecutiveSilenceChecks = 0;
+            silenceStartTime = null;
             speechDetected = false;
-            speechStartTime = null;
             
-            // Check volume every 100ms
-            volumeCheckInterval = setInterval(() => {
+            // Buffer for frequency data
+            const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+            
+            // Set up interval to check for silence
+            silenceDetectionInterval = setInterval(() => {
                 if (!isRecording) {
-                    clearInterval(volumeCheckInterval);
+                    clearInterval(silenceDetectionInterval);
                     return;
                 }
                 
-                analyser.getByteFrequencyData(volumeDataArray);
+                // Get current frequency data
+                audioAnalyser.getByteFrequencyData(dataArray);
                 
-                // Calculate volume level
+                // Calculate average volume
                 let sum = 0;
-                for (let i = 0; i < volumeDataArray.length; i++) {
-                    sum += volumeDataArray[i];
+                for (let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
                 }
-                const averageVolume = sum / volumeDataArray.length;
+                const average = sum / dataArray.length;
                 
-                // Update visualization
-                updateVisualization(averageVolume);
+                // Update visualization (actual audio level)
+                updateVisualization(average);
                 
-                // If we detect speech for the first time
-                if (averageVolume > silenceThreshold && !speechDetected) {
+                // Check if audio is above speech threshold (user is speaking)
+                if (average > SILENCE_THRESHOLD) {
+                    // User is speaking
                     speechDetected = true;
-                    speechStartTime = Date.now();
-                    console.log("Mowa wykryta, rozpoczęto nasłuchiwanie");
-                }
-                
-                // Only start checking for silence after we've detected speech
-                if (speechDetected) {
-                    // Check for silence
-                    if (averageVolume < silenceThreshold) {
-                        if (!silenceStart) {
-                            silenceStart = Date.now();
-                            console.log("Cisza wykryta, rozpoczęcie odliczania");
-                        } else if (Date.now() - silenceStart > silenceTimeout) {
-                            // Only stop if we've had some meaningful speech (> 500ms)
-                            if (speechStartTime && Date.now() - speechStartTime > 500) {
-                                console.log("Cisza trwała wystarczająco długo, zatrzymanie nagrywania");
-                                clearInterval(volumeCheckInterval);
-                                stopRecording();
-                            }
+                    silenceStartTime = null;
+                    consecutiveSilenceChecks = 0;
+                } else {
+                    // User is not speaking (silence detected)
+                    
+                    // Only consider silence after speech has been detected
+                    if (speechDetected) {
+                        // If this is the start of silence
+                        if (silenceStartTime === null) {
+                            silenceStartTime = Date.now();
                         }
-                    } else {
-                        // Reset silence timer if sound is detected
-                        silenceStart = null;
+                        
+                        // Check how long the silence has lasted
+                        const silenceDuration = Date.now() - silenceStartTime;
+                        
+                        // If silence has lasted for the specified duration
+                        if (silenceDuration >= SILENCE_DURATION) {
+                            console.log(`Cisza wykryta przez ${silenceDuration}ms. Zatrzymuję nagrywanie.`);
+                            stopRecording();
+                        }
                     }
                 }
-            }, 100);
+            }, CHECK_INTERVAL);
             
-            console.log("Detekcja aktywności głosowej uruchomiona");
+            console.log("Detekcja ciszy uruchomiona");
         } catch (error) {
-            console.error('Błąd podczas konfiguracji detekcji aktywności głosowej:', error);
+            console.error("Błąd podczas konfigurowania detekcji ciszy:", error);
         }
     }
     
-    // Update visualization based on actual audio levels
     function updateVisualization(volume) {
         const bars = document.querySelectorAll('.visualization-bar');
-        const scaledVolume = Math.min(100, volume * 3); // Scale up for better visibility
+        if (!bars.length) return;
         
+        // Scale volume to visual height (0-50px)
+        const scaledVolume = Math.min(50, volume * 1.5);
+        
+        // Update each bar with slight random variation for visual effect
         bars.forEach(bar => {
-            // Randomize slightly around the actual volume for visual effect
             const randomFactor = 0.8 + Math.random() * 0.4;
-            const height = Math.max(5, scaledVolume * randomFactor);
+            const height = Math.max(3, scaledVolume * randomFactor);
             bar.style.height = `${height}px`;
         });
     }
@@ -247,11 +256,8 @@ document.addEventListener('DOMContentLoaded', () => {
             mediaRecorder.stop();
             isRecording = false;
             
-            // Clean up voice activity detection
-            if (volumeCheckInterval) {
-                clearInterval(volumeCheckInterval);
-                volumeCheckInterval = null;
-            }
+            // Stop silence detection
+            clearInterval(silenceDetectionInterval);
             
             // Update UI
             recordButton.classList.remove('recording');
@@ -273,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             // Create form data for the API request
             const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.mp3'); // Use .mp3 extension for consistent handling
+            formData.append('audio', audioBlob, 'recording.mp3'); 
             formData.append('webhook_url', webhookUrl);
             
             // Send the audio to the backend
@@ -307,16 +313,12 @@ document.addEventListener('DOMContentLoaded', () => {
             statusMessage.textContent = 'Oczekiwanie na odpowiedź n8n...';
             
             // Get the n8n response directly from the webhook response
-            // This should contain the n8n response in data.n8nResponse if it exists
             if (data.n8nResponse && data.n8nResponse.text) {
-                // We have a response from n8n already
                 console.log("Otrzymano natychmiastową odpowiedź z n8n:", data.n8nResponse.text);
                 receiveTextResponse(data.n8nResponse.text);
             } else {
-                // Make a direct request to get the TTS for the response from n8n
-                // This is needed because the logs show n8n is responding but the app isn't using it
+                // Try to get the response via last-response-tts endpoint
                 try {
-                    // Get the last response data
                     const n8nResponse = await fetch('/api/last-response-tts', {
                         method: 'GET',
                         headers: {
@@ -328,14 +330,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         const responseData = await n8nResponse.json();
                         
                         if (responseData.text && responseData.audio_url) {
-                            // Display and play the response
                             displayAndPlayResponse(responseData.text, responseData.audio_url);
                         } else {
-                            // If we can't get the n8n response, trigger TTS directly with the default response
                             sendDefaultResponseRequest();
                         }
                     } else {
-                        // As a last resort, let's just send a default response
                         sendDefaultResponseRequest();
                     }
                 } catch (error) {
@@ -464,4 +463,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         }
     });
+    
+    // Show initial status
+    statusMessage.textContent = 'Gotowy do słuchania';
 });
