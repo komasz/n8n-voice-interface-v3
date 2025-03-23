@@ -1,4 +1,64 @@
-document.addEventListener('DOMContentLoaded', () => {
+// Start silence detection loop
+    function startSilenceDetection() {
+        // Buffer for frequency data
+        const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+        
+        // Set up interval to check for speech and silence
+        silenceDetectionInterval = setInterval(() => {
+            if (!isListening) {
+                clearInterval(silenceDetectionInterval);
+                return;
+            }
+            
+            // Get current frequency data
+            audioAnalyser.getByteFrequencyData(dataArray);
+            
+            // Calculate average volume
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            
+            // Update visualization (actual audio level)
+            updateVisualization(average);
+            
+            // Jeśli używamy ręcznego trybu, pomijamy automatyczną detekcję mowy
+            if (typeof window.isRecordingManually === 'function' && window.isRecordingManually()) {
+                return;
+            }
+            
+            // Stary kod automatycznej detekcji mowy - działa tylko gdy nie używamy ręcznego trybu
+            const SILENCE_THRESHOLD = 15;
+            const SILENCE_DURATION = 1500;
+            
+            // User is speaking
+            if (average > SILENCE_THRESHOLD) {
+                // If audio is playing, stop playback
+                if (audioPlayer && !audioPlayer.paused) {
+                    stopAudioPlayback();
+                }
+                
+                // If not already recording, start a new recording
+                if (!isRecording) {
+                    startNewRecording();
+                }
+                
+                // Reset silence timer
+                silenceStartTime = null;
+                speechDetected = true;
+            } 
+            // User is silent
+            else {
+                // Only check for end of speech if we're recording and speech was detected
+                if (isRecording && speechDetected) {
+                    // If this is the start of silence
+                    if (silenceStartTime === null) {
+                        silenceStartTime = Date.now();
+                    }
+                    
+                    // Check if silence has lasted long enough
+                    const silenceDuration = Date.now() - silencedocument.addEventListener('DOMContentLoaded', () => {
     const recordButton = document.getElementById('record-button');
     const statusMessage = document.getElementById('status-message');
     const visualizationContainer = document.getElementById('visualization-container');
@@ -124,6 +184,9 @@ document.addEventListener('DOMContentLoaded', () => {
             audioSource = audioContext.createMediaStreamSource(microphoneStream);
             audioAnalyser = audioContext.createAnalyser();
             
+            // Expose audioAnalyser globally for manual controls
+            window.audioAnalyser = audioAnalyser;
+            
             // Configure analyzer
             audioAnalyser.fftSize = 256;
             audioAnalyser.smoothingTimeConstant = 0.8;
@@ -208,29 +271,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // Buffer for frequency data
         const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
         
-        // Debug - stwórz element do wyświetlania poziomu dźwięku
-        let debugInfoElement = document.createElement('div');
-        debugInfoElement.style.position = 'fixed';
-        debugInfoElement.style.bottom = '10px';
-        debugInfoElement.style.right = '10px';
-        debugInfoElement.style.padding = '5px';
-        debugInfoElement.style.background = 'rgba(0, 0, 0, 0.7)';
-        debugInfoElement.style.color = 'white';
-        debugInfoElement.style.borderRadius = '5px';
-        debugInfoElement.style.fontSize = '12px';
-        debugInfoElement.style.zIndex = '9999';
-        document.body.appendChild(debugInfoElement);
-        
-        // Obniżamy próg detekcji dźwięku
-        const SILENCE_THRESHOLD = 10; // Obniżony próg do wykrywania cichszej mowy
-        const SPEECH_THRESHOLD = 15;  // Próg rozpoczęcia nagrywania
-        const SILENCE_DURATION = 1500; // 1.5 sekundy ciszy, aby zakończyć
-        
         // Set up interval to check for speech and silence
         silenceDetectionInterval = setInterval(() => {
             if (!isListening) {
                 clearInterval(silenceDetectionInterval);
-                document.body.removeChild(debugInfoElement);
                 return;
             }
             
@@ -244,26 +288,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const average = sum / dataArray.length;
             
-            // Aktualizuj element debugowania
-            debugInfoElement.textContent = `Poziom dźwięku: ${average.toFixed(2)} | Próg: ${SPEECH_THRESHOLD} | ${isRecording ? 'Nagrywanie' : 'Oczekiwanie'} | ${speechDetected ? 'Mowa wykryta' : 'Cisza'}`;
-            debugInfoElement.style.backgroundColor = average > SPEECH_THRESHOLD ? 'rgba(0, 255, 0, 0.7)' : 'rgba(0, 0, 0, 0.7)';
-            
             // Update visualization (actual audio level)
             updateVisualization(average);
             
-            // User is speaking - wyższy próg dla rozpoczęcia nagrywania
-            if (average > SPEECH_THRESHOLD) {
+            // User is speaking
+            if (average > SILENCE_THRESHOLD) {
                 // Jeśli odtwarzane jest audio, przerwij odtwarzanie
                 if (audioPlayer && !audioPlayer.paused) {
                     stopAudioPlayback();
                 }
                 
-                // Log poziomu dźwięku, gdy jest wyższy niż próg
-                console.log(`[Detekcja dźwięku] Poziom: ${average.toFixed(2)} > próg ${SPEECH_THRESHOLD}, nagrywanie: ${isRecording}`);
-                
                 // If not already recording, start a new recording
                 if (!isRecording) {
-                    console.log("Rozpoczynam nowe nagranie - wykryto mowę");
                     startNewRecording();
                 }
                 
@@ -271,19 +307,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 silenceStartTime = null;
                 speechDetected = true;
             } 
-            // User is silent - niższy próg dla kontynuacji nagrywania
-            else if (average <= SILENCE_THRESHOLD) {
+            // User is silent
+            else {
                 // Only check for end of speech if we're recording and speech was detected
                 if (isRecording && speechDetected) {
                     // If this is the start of silence
                     if (silenceStartTime === null) {
                         silenceStartTime = Date.now();
-                        console.log("Początek ciszy wykryty");
                     }
                     
                     // Check if silence has lasted long enough
                     const silenceDuration = Date.now() - silenceStartTime;
-                    
                     if (silenceDuration >= SILENCE_DURATION) {
                         console.log(`Cisza wykryta przez ${silenceDuration}ms. Kończę nagrywanie.`);
                         stopCurrentRecording();
@@ -292,13 +326,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         speechDetected = false;
                         silenceStartTime = null;
                     }
-                }
-            }
-            // Jeśli dźwięk jest pomiędzy progami (SILENCE_THRESHOLD < average <= SPEECH_THRESHOLD)
-            else {
-                // Jeśli nagrywamy i wykryliśmy mowę, resetujemy timer ciszy
-                if (isRecording && speechDetected) {
-                    silenceStartTime = null;
                 }
             }
         }, CHECK_INTERVAL);
@@ -367,32 +394,10 @@ document.addEventListener('DOMContentLoaded', () => {
             activeRequests++;
             updateStatus();
             
-            console.log(`Przetwarzanie nagrania #${recordingId}, oryginalny format: ${audioBlob.type}, rozmiar: ${audioBlob.size} bajtów`);
-            
-            // Optymalizuj audio dla OpenAI przed wysłaniem
-            let optimizedAudio = {
-                blob: audioBlob,
-                filename: `recording-${recordingId}.webm`,
-                mimeType: audioBlob.type || 'audio/webm'
-            };
-            
-            try {
-                if (window.AudioConverter) {
-                    console.log("Konwertuję audio do optymalnego formatu...");
-                    optimizedAudio = await window.AudioConverter.optimizeForOpenAI(audioBlob);
-                    console.log(`Audio przekonwertowane:`, optimizedAudio);
-                }
-            } catch (conversionError) {
-                console.error("Błąd podczas konwersji audio:", conversionError);
-                // Utrzymujemy domyślne wartości w przypadku błędu
-            }
-            
             // Create form data for the API request
             const formData = new FormData();
-            formData.append('audio', optimizedAudio.blob, optimizedAudio.filename);
+            formData.append('audio', audioBlob, `recording-${recordingId}.mp3`);
             formData.append('webhook_url', webhookUrl);
-            
-            console.log(`Wysyłam plik audio: ${optimizedAudio.filename}, rozmiar: ${optimizedAudio.blob.size} bajtów, typ: ${optimizedAudio.mimeType}`);
             
             // Send the audio to the backend
             const response = await fetch('/api/transcribe', {
@@ -700,8 +705,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Make showMessage available to other scripts
+    // Expose important functions and variables to global scope for manual controls
+    window.startNewRecording = startNewRecording;
+    window.stopCurrentRecording = stopCurrentRecording;
     window.showMessage = showMessage;
+    window.audioAnalyser = null; // Will be set in startListening
+    window.isListening = false;
+    window.isRecording = false;
     
     // Show initial status
     statusMessage.textContent = 'Gotowy do słuchania';
