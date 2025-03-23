@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from stt import transcribe_audio
+from backend.stt import transcribe_audio
 from webhook import send_to_n8n
 
 # Configure logging
