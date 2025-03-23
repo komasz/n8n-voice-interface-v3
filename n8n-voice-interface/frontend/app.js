@@ -385,6 +385,8 @@
             return;
         }
         
+        console.log(`Przetwarzanie nagrania #${recordingId}, format: ${audioBlob.type}, rozmiar: ${audioBlob.size} bajtów`);
+        
         // Create a new conversation entry for this recording
         const entryId = `entry-${recordingId}`;
         addConversationEntry(entryId);
@@ -397,6 +399,8 @@
             const formData = new FormData();
             formData.append('audio', audioBlob, `recording-${recordingId}.mp3`);
             formData.append('webhook_url', webhookUrl);
+            
+            console.log(`Wysyłanie nagrania do API, format: ${audioBlob.type}`);
             
             // Send the audio to the backend
             const response = await fetch('/api/transcribe', {
@@ -416,6 +420,7 @@
             }
             
             const data = await response.json();
+            console.log(`Otrzymano odpowiedź transkrypcji: ${data.text}`);
             
             // Update the conversation entry with the transcription
             updateConversationEntryWithTranscription(entryId, data.text);
@@ -616,11 +621,11 @@
     function getSupportedMimeType() {
         // Try common audio formats in order of preference
         const mimeTypes = [
-            'audio/mp3',
-            'audio/mpeg',
-            'audio/webm',
-            'audio/ogg',
-            'audio/wav'
+            'audio/mpeg',      // MP3 - dobra kompatybilność z OpenAI
+            'audio/mp3',       // Alternatywny MP3
+            'audio/webm',      // WebM - dobra obsługa w przeglądarkach
+            'audio/wav',       // WAV - dobra jakość
+            'audio/ogg'        // OGG - zapasowy format
         ];
         
         for (const type of mimeTypes) {
@@ -631,7 +636,7 @@
         }
         
         console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
-        return null;
+        return 'audio/webm'; // Bezpieczna wartość domyślna
     }
     
     // Function to play audio response
@@ -704,6 +709,7 @@
     
     // Expose necessary functions to other scripts
     window.showMessage = showMessage;
+    window.toggleContinuousListening = toggleContinuousListening;
     
     // Show initial status
     statusMessage.textContent = 'Gotowy do słuchania';
