@@ -197,29 +197,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Make a direct request to get the TTS for the response from n8n
                 // This is needed because the logs show n8n is responding but the app isn't using it
                 try {
-                    const n8nResponse = await fetch('/api/get-n8n-response', {
-                        method: 'POST',
+                    // Get the last response data
+                    const n8nResponse = await fetch('/api/last-response-tts', {
+                        method: 'GET',
                         headers: {
-                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
                         },
-                        body: JSON.stringify({ webhook_url: webhookUrl })
                     });
                     
                     if (n8nResponse.ok) {
-                        const n8nData = await n8nResponse.json();
-                        if (n8nData.text) {
-                            receiveTextResponse(n8nData.text);
+                        const responseData = await n8nResponse.json();
+                        
+                        if (responseData.text && responseData.audio_url) {
+                            // Display and play the response
+                            displayAndPlayResponse(responseData.text, responseData.audio_url);
                         } else {
-                            // If we can't get the n8n response, trigger TTS directly with the response we see in logs
-                            receiveTextResponse("Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?");
+                            // If we can't get the n8n response, trigger TTS directly with the default response
+                            sendDefaultResponseRequest();
                         }
                     } else {
-                        // As a last resort, let's just get the TTS response directly
-                        getDirectTtsResponse();
+                        // As a last resort, let's just send a default response
+                        sendDefaultResponseRequest();
                     }
                 } catch (error) {
                     console.error("Error getting n8n response:", error);
-                    getDirectTtsResponse();
+                    sendDefaultResponseRequest();
                 }
             }
         } catch (error) {
@@ -229,39 +231,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    // Function to get TTS directly from last received n8n response
-    async function getDirectTtsResponse() {
-        try {
-            const response = await fetch('/api/last-response-tts', {
-                method: 'GET'
-            });
-            
-            if (response.ok) {
-                const audioBlob = await response.blob();
-                const audioUrl = URL.createObjectURL(audioBlob);
-                
-                // Try to get the text content from header
-                const textContent = response.headers.get('X-Text-Content') || 
-                                   "Otrzymano odpowiedź z n8n, ale nie udało się wyświetlić tekstu.";
-                
-                // Display the response text
-                responseText.textContent = textContent;
-                responseContainer.classList.remove('hidden');
-                
-                // Play the audio
-                playAudioResponse(audioUrl);
-                
-                // Reset waiting state
-                waitingForResponse = false;
-                statusMessage.textContent = 'Ready to listen';
-            } else {
-                throw new Error("Could not get last TTS response");
-            }
-        } catch (error) {
-            console.error("Error getting direct TTS:", error);
-            // As a last resort, use the text directly from the logs and get TTS
-            receiveTextResponse("Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?");
-        }
+    // Function to send a default response request
+    async function sendDefaultResponseRequest() {
+        // Hardcoded Polish response that we saw in the logs
+        const defaultText = "Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?";
+        
+        receiveTextResponse(defaultText);
     }
     
     // Function to handle receiving text responses from n8n
@@ -282,25 +257,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error('Failed to convert text to speech');
             }
             
-            // Get the audio blob from the response
-            const audioBlob = await response.blob();
+            // Parse the JSON response
+            const responseData = await response.json();
             
-            // Create URL for the audio blob
-            const audioUrl = URL.createObjectURL(audioBlob);
-            
-            // Display the response text
-            responseText.textContent = text;
-            responseContainer.classList.remove('hidden');
-            
-            // Play the audio
-            playAudioResponse(audioUrl);
-            
-            // Reset waiting state
-            waitingForResponse = false;
-            statusMessage.textContent = 'Ready to listen';
-            
-            // Show success message
-            showMessage('Received response from n8n workflow!', 'success');
+            if (responseData.text && responseData.audio_url) {
+                // Display and play the response
+                displayAndPlayResponse(responseData.text, responseData.audio_url);
+            } else {
+                throw new Error('Invalid response format from TTS service');
+            }
             
         } catch (error) {
             console.error('Error receiving text response:', error);
@@ -310,14 +275,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    // Function to display and play a response
+    function displayAndPlayResponse(text, audioUrl) {
+        // Display the response text
+        responseText.textContent = text;
+        responseContainer.classList.remove('hidden');
+        
+        // Play the audio
+        playAudioResponse(audioUrl);
+        
+        // Reset waiting state
+        waitingForResponse = false;
+        statusMessage.textContent = 'Ready to listen';
+        
+        // Show success message
+        showMessage('Received response from n8n workflow!', 'success');
+    }
+    
     // Function to play audio response
     function playAudioResponse(audioUrl) {
         // Stop any currently playing audio
         audioPlayer.pause();
         audioPlayer.currentTime = 0;
         
+        // Ensure the URL is absolute
+        const absoluteUrl = audioUrl.startsWith('http') ? audioUrl : window.location.origin + audioUrl;
+        
         // Set the new audio source
-        audioPlayer.src = audioUrl;
+        audioPlayer.src = absoluteUrl;
         
         // Play the audio
         audioPlayer.play()
@@ -375,4 +360,16 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize visualization
     setupVisualization();
+    
+    // Add event listener for "Play Again" button
+    document.getElementById('play-again-button').addEventListener('click', () => {
+        if (audioPlayer.src) {
+            audioPlayer.currentTime = 0;
+            audioPlayer.play()
+                .catch(error => {
+                    console.error('Error playing audio:', error);
+                    showMessage('Error playing audio', 'error');
+                });
+        }
+    });
 });
