@@ -10,17 +10,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-transcribe")
+# For transcription, we should use whisper-1 first to verify functionality
+STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
 async def transcribe_audio(audio_file: UploadFile) -> dict:
     """
-    Transcribe audio using OpenAI's gpt-4o-transcribe model.
-
+    Transcribe audio using OpenAI's API.
+    
     Args:
         audio_file: The uploaded audio file
-
+    
     Returns:
         A dictionary containing the transcription text
     """
@@ -51,16 +52,16 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
 
         # Prepare the file and form data
         with open(temp_file_path, "rb") as file:
+            # Set explicit MIME type to audio/mpeg as a safe default
             files = {
-                "file": (os.path.basename(temp_file_path), file, "audio/wav"),
-                "model": (None, STT_MODEL),
-                "response_format": (None, "json")
+                "file": (os.path.basename(temp_file_path), file, "audio/mpeg"),
+                "model": (None, STT_MODEL)
             }
-
+            
             # Make the API request
             logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
             response = requests.post(
-                API_URL, #Corrected API URL
+                API_URL,
                 headers=headers,
                 files=files
             )
