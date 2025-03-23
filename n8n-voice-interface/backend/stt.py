@@ -4,7 +4,6 @@ import uuid
 import tempfile
 import requests
 import subprocess
-import magic  # Dodaj tę bibliotekę: pip install python-magic
 from fastapi import UploadFile, HTTPException
 
 # Configure logging
@@ -45,24 +44,17 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
             content = await audio_file.read()
             temp_file.write(content)
 
-        # Sprawdź faktyczny format pliku
-        try:
-            mime = magic.Magic(mime=True)
-            file_type = mime.from_file(original_temp_file)
-            logger.info(f"Detected file type: {file_type}")
-        except Exception as e:
-            logger.warning(f"Could not detect file type: {str(e)}")
-            file_type = "unknown"
+        logger.info(f"Saved audio to temporary file: {original_temp_file}")
+        logger.info(f"File size: {os.path.getsize(original_temp_file)} bytes")
 
-        # Przekonwertuj audio do formatu MP3 za pomocą ffmpeg
+        # Próbuj przekonwertować audio do formatu MP3 za pomocą ffmpeg
         try:
-            logger.info(f"Converting audio file to MP3 format...")
-            # Sprawdź czy ffmpeg jest zainstalowany
-            if subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode != 0:
-                logger.error("ffmpeg is not installed. Please install it to enable audio conversion.")
-                # Jeśli ffmpeg nie jest zainstalowany, używamy oryginalnego pliku
-                final_temp_file = original_temp_file
-            else:
+            # Sprawdź czy ffmpeg jest dostępny, używając which
+            which_result = subprocess.run(['which', 'ffmpeg'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ffmpeg_available = which_result.returncode == 0
+
+            if ffmpeg_available:
+                logger.info(f"Converting audio file to MP3 format...")
                 # Konwersja do MP3
                 result = subprocess.run([
                     'ffmpeg', '-y', '-i', original_temp_file, 
@@ -70,24 +62,28 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
                     '-ac', '1',      # Ustaw 1 kanał (mono)
                     '-b:a', '128k',  # Bitrate 128kbps
                     final_temp_file
-                ], capture_output=True)
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 
                 if result.returncode != 0:
-                    logger.error(f"Error converting audio: {result.stderr.decode()}")
+                    error_output = result.stderr.decode() if result.stderr else "Unknown error"
+                    logger.error(f"Error converting audio: {error_output}")
                     # W przypadku błędu, użyj oryginalnego pliku
                     final_temp_file = original_temp_file
                 else:
                     logger.info("Audio successfully converted to MP3")
+            else:
+                logger.warning("ffmpeg not available - using original file")
+                final_temp_file = original_temp_file
         except Exception as e:
-            logger.error(f"Error during conversion: {str(e)}")
+            logger.error(f"Error during conversion attempt: {str(e)}")
             # W przypadku błędu, użyj oryginalnego pliku
             final_temp_file = original_temp_file
 
-        logger.info(f"Saved audio to temporary file: {final_temp_file}")
+        logger.info(f"Using file for API request: {final_temp_file}")
 
         # Check file size
         file_size = os.path.getsize(final_temp_file)
-        logger.info(f"File size: {file_size} bytes")
+        logger.info(f"Final file size: {file_size} bytes")
         
         if file_size == 0:
             raise HTTPException(status_code=400, detail="Audio file is empty")
