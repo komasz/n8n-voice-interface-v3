@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettingsButton = document.getElementById('save-settings');
     const responseContainer = document.getElementById('response-container');
     const responseText = document.getElementById('response-text');
+    const autoStopCheckbox = document.getElementById('auto-stop-checkbox');
     
     // Audio player for responses
     let audioPlayer = new Audio();
@@ -20,25 +21,40 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Load saved webhook URL from localStorage
     webhookUrlInput.value = localStorage.getItem('webhookUrl') || '';
+    
+    // Load auto-stop preference from localStorage
+    const savedAutoStop = localStorage.getItem('autoStopEnabled');
+    autoStopCheckbox.checked = savedAutoStop === null ? true : savedAutoStop === 'true';
 
-    // Save webhook URL to localStorage
+    // Save webhook URL and settings to localStorage
     saveSettingsButton.addEventListener('click', () => {
         const webhookUrl = webhookUrlInput.value.trim();
         if (webhookUrl) {
             localStorage.setItem('webhookUrl', webhookUrl);
-            showMessage('Settings saved successfully!', 'success');
+            localStorage.setItem('autoStopEnabled', autoStopCheckbox.checked);
+            showMessage('Ustawienia zapisane pomyślnie!', 'success');
         } else {
-            showMessage('Please enter a valid webhook URL', 'error');
+            showMessage('Proszę wprowadzić poprawny adres URL webhooka', 'error');
         }
     });
 
     let mediaRecorder;
     let audioChunks = [];
     let isRecording = false;
+    
+    // Variables for voice activity detection
+    let audioContext;
+    let analyser;
+    let silenceStart = null;
+    let silenceThreshold = 15; // Threshold for silence detection (dB)
+    let silenceTimeout = 1500; // Time of silence before stopping (ms)
+    let audioSource;
+    let rafId;
+    let volumeDataArray;
 
     // Check if browser supports required APIs
     if (!navigator.mediaDevices || !window.MediaRecorder) {
-        statusMessage.textContent = 'Your browser does not support audio recording.';
+        statusMessage.textContent = 'Twoja przeglądarka nie obsługuje nagrywania dźwięku.';
         recordButton.disabled = true;
         return;
     }
@@ -74,10 +90,13 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             mediaRecorder.addEventListener('stop', () => {
+                // Stop the voice activity detection
+                stopVoiceActivityDetection();
+                
                 // Create audio blob with specific type
                 const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/mpeg' });
                 
-                console.log("Recording completed: ", {
+                console.log("Nagrywanie zakończone: ", {
                     mimeType: audioBlob.type,
                     size: audioBlob.size
                 });
@@ -88,22 +107,116 @@ document.addEventListener('DOMContentLoaded', () => {
                 stream.getTracks().forEach(track => track.stop());
             });
             
+            // Setup voice activity detection
+            if (autoStopCheckbox.checked) {
+                setupVoiceActivityDetection(stream);
+            }
+            
             // Start recording
             mediaRecorder.start();
             isRecording = true;
             
             // Update UI
             recordButton.classList.add('recording');
-            statusMessage.textContent = 'Listening...';
+            statusMessage.textContent = 'Słucham...';
             visualizationContainer.classList.add('active-visualization');
             hideMessage();
             transcriptionContainer.classList.add('hidden');
             responseContainer.classList.add('hidden');
             
         } catch (error) {
-            console.error('Error starting recording:', error);
-            showMessage(`Could not access the microphone: ${error.message}`, 'error');
+            console.error('Błąd podczas uruchamiania nagrywania:', error);
+            showMessage(`Nie można uzyskać dostępu do mikrofonu: ${error.message}`, 'error');
         }
+    }
+    
+    // Setup voice activity detection
+    function setupVoiceActivityDetection(stream) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioSource = audioContext.createMediaStreamSource(stream);
+            analyser = audioContext.createAnalyser();
+            
+            analyser.fftSize = 256;
+            analyser.minDecibels = -90;
+            analyser.maxDecibels = -10;
+            analyser.smoothingTimeConstant = 0.85;
+            
+            audioSource.connect(analyser);
+            
+            volumeDataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            // Start monitoring voice activity
+            monitorVoiceActivity();
+            
+            console.log("Detekcja aktywności głosowej uruchomiona");
+        } catch (error) {
+            console.error('Błąd podczas konfiguracji detekcji aktywności głosowej:', error);
+        }
+    }
+    
+    // Monitor voice activity to detect silence
+    function monitorVoiceActivity() {
+        if (!isRecording) return;
+        
+        analyser.getByteFrequencyData(volumeDataArray);
+        
+        // Calculate volume level
+        let sum = 0;
+        for (let i = 0; i < volumeDataArray.length; i++) {
+            sum += volumeDataArray[i];
+        }
+        const averageVolume = sum / volumeDataArray.length;
+        
+        // Update visualization
+        updateVisualization(averageVolume);
+        
+        // Check for silence
+        if (averageVolume < silenceThreshold) {
+            if (!silenceStart) {
+                silenceStart = Date.now();
+                console.log("Cisza wykryta, rozpoczęcie odliczania");
+            } else if (Date.now() - silenceStart > silenceTimeout) {
+                console.log("Cisza trwała wystarczająco długo, zatrzymanie nagrywania");
+                stopRecording();
+                return; // Stop the loop
+            }
+        } else {
+            // Reset silence timer if sound is detected
+            silenceStart = null;
+        }
+        
+        // Continue monitoring
+        rafId = requestAnimationFrame(monitorVoiceActivity);
+    }
+    
+    // Update visualization based on actual audio levels
+    function updateVisualization(volume) {
+        const bars = document.querySelectorAll('.visualization-bar');
+        const scaledVolume = Math.min(100, volume * 3); // Scale up for better visibility
+        
+        bars.forEach(bar => {
+            // Randomize slightly around the actual volume for visual effect
+            const randomFactor = 0.8 + Math.random() * 0.4;
+            const height = Math.max(5, scaledVolume * randomFactor);
+            bar.style.height = `${height}px`;
+        });
+    }
+    
+    // Stop voice activity detection
+    function stopVoiceActivityDetection() {
+        if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+        }
+        
+        if (audioContext && audioContext.state !== 'closed') {
+            if (audioSource) {
+                audioSource.disconnect();
+            }
+        }
+        
+        silenceStart = null;
     }
 
     // Find supported MIME type
@@ -119,12 +232,12 @@ document.addEventListener('DOMContentLoaded', () => {
         
         for (const type of mimeTypes) {
             if (MediaRecorder.isTypeSupported(type)) {
-                console.log(`Browser supports recording in ${type} format`);
+                console.log(`Przeglądarka wspiera nagrywanie w formacie ${type}`);
                 return type;
             }
         }
         
-        console.warn('No preferred MIME types are supported by this browser');
+        console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
         return null;
     }
 
@@ -136,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Update UI
             recordButton.classList.remove('recording');
-            statusMessage.textContent = 'Processing...';
+            statusMessage.textContent = 'Przetwarzanie...';
             visualizationContainer.classList.remove('active-visualization');
         }
     }
@@ -146,8 +259,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const webhookUrl = localStorage.getItem('webhookUrl');
         
         if (!webhookUrl) {
-            showMessage('Please set the N8N Webhook URL in settings first', 'error');
-            statusMessage.textContent = 'Ready to listen';
+            showMessage('Proszę najpierw ustawić adres URL webhooka N8N w ustawieniach', 'error');
+            statusMessage.textContent = 'Gotowy do słuchania';
             return;
         }
         
@@ -164,12 +277,12 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             if (!response.ok) {
-                let errorMessage = 'Transcription failed';
+                let errorMessage = 'Transkrypcja nie powiodła się';
                 try {
                     const errorData = await response.json();
                     errorMessage = errorData.detail || errorMessage;
                 } catch (e) {
-                    console.error('Error parsing error response:', e);
+                    console.error('Błąd parsowania odpowiedzi błędu:', e);
                 }
                 throw new Error(errorMessage);
             }
@@ -181,17 +294,17 @@ document.addEventListener('DOMContentLoaded', () => {
             transcriptionContainer.classList.remove('hidden');
             
             // Show success message
-            showMessage('Sent to n8n workflow! Waiting for response...', 'success');
+            showMessage('Wysłano do przepływu pracy n8n! Oczekiwanie na odpowiedź...', 'success');
             
             // Start checking for response from n8n
             waitingForResponse = true;
-            statusMessage.textContent = 'Waiting for n8n response...';
+            statusMessage.textContent = 'Oczekiwanie na odpowiedź n8n...';
             
             // Get the n8n response directly from the webhook response
             // This should contain the n8n response in data.n8nResponse if it exists
             if (data.n8nResponse && data.n8nResponse.text) {
                 // We have a response from n8n already
-                console.log("Got immediate response from n8n:", data.n8nResponse.text);
+                console.log("Otrzymano natychmiastową odpowiedź z n8n:", data.n8nResponse.text);
                 receiveTextResponse(data.n8nResponse.text);
             } else {
                 // Make a direct request to get the TTS for the response from n8n
@@ -220,14 +333,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         sendDefaultResponseRequest();
                     }
                 } catch (error) {
-                    console.error("Error getting n8n response:", error);
+                    console.error("Błąd podczas pobierania odpowiedzi n8n:", error);
                     sendDefaultResponseRequest();
                 }
             }
         } catch (error) {
-            console.error('Error during transcription:', error);
-            showMessage(`Error: ${error.message}`, 'error');
-            statusMessage.textContent = 'Ready to listen';
+            console.error('Błąd podczas transkrypcji:', error);
+            showMessage(`Błąd: ${error.message}`, 'error');
+            statusMessage.textContent = 'Gotowy do słuchania';
         }
     }
     
@@ -242,7 +355,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Function to handle receiving text responses from n8n
     async function receiveTextResponse(text) {
         try {
-            console.log("Processing n8n response text:", text);
+            console.log("Przetwarzanie tekstu odpowiedzi n8n:", text);
             
             // Request TTS conversion from the backend
             const response = await fetch('/api/speak', {
@@ -254,7 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             if (!response.ok) {
-                throw new Error('Failed to convert text to speech');
+                throw new Error('Nie udało się przekonwertować tekstu na mowę');
             }
             
             // Parse the JSON response
@@ -264,14 +377,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Display and play the response
                 displayAndPlayResponse(responseData.text, responseData.audio_url);
             } else {
-                throw new Error('Invalid response format from TTS service');
+                throw new Error('Nieprawidłowy format odpowiedzi z usługi TTS');
             }
             
         } catch (error) {
-            console.error('Error receiving text response:', error);
-            showMessage(`Error: ${error.message}`, 'error');
+            console.error('Błąd podczas odbierania odpowiedzi tekstowej:', error);
+            showMessage(`Błąd: ${error.message}`, 'error');
             waitingForResponse = false;
-            statusMessage.textContent = 'Ready to listen';
+            statusMessage.textContent = 'Gotowy do słuchania';
         }
     }
     
@@ -286,10 +399,10 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Reset waiting state
         waitingForResponse = false;
-        statusMessage.textContent = 'Ready to listen';
+        statusMessage.textContent = 'Gotowy do słuchania';
         
         // Show success message
-        showMessage('Received response from n8n workflow!', 'success');
+        showMessage('Otrzymano odpowiedź z przepływu pracy n8n!', 'success');
     }
     
     // Function to play audio response
@@ -307,13 +420,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // Play the audio
         audioPlayer.play()
             .catch(error => {
-                console.error('Error playing audio:', error);
-                showMessage('Error playing audio response', 'error');
+                console.error('Błąd odtwarzania dźwięku:', error);
+                showMessage('Błąd odtwarzania odpowiedzi dźwiękowej', 'error');
             });
             
         // Add event listener for when audio completes
         audioPlayer.onended = () => {
-            console.log('Audio playback complete');
+            console.log('Odtwarzanie dźwięku zakończone');
         };
     }
 
@@ -352,7 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         recordButton.addEventListener('click', () => {
-            if (isRecording) {
+            if (isRecording && !autoStopCheckbox.checked) {
                 animateBars();
             }
         });
@@ -367,8 +480,8 @@ document.addEventListener('DOMContentLoaded', () => {
             audioPlayer.currentTime = 0;
             audioPlayer.play()
                 .catch(error => {
-                    console.error('Error playing audio:', error);
-                    showMessage('Error playing audio', 'error');
+                    console.error('Błąd odtwarzania dźwięku:', error);
+                    showMessage('Błąd odtwarzania dźwięku', 'error');
                 });
         }
     });
