@@ -46,10 +46,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start recording function
     async function startRecording() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    channelCount: 1,
+                    sampleRate: 16000
+                } 
+            });
             
-            // Setup media recorder
-            mediaRecorder = new MediaRecorder(stream);
+            // Setup media recorder with specific MIME type if available
+            const mimeType = getSupportedMimeType();
+            const options = mimeType ? { mimeType } : {};
+            
+            mediaRecorder = new MediaRecorder(stream, options);
             audioChunks = [];
             
             mediaRecorder.addEventListener('dataavailable', event => {
@@ -57,7 +65,14 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             mediaRecorder.addEventListener('stop', () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                // Create audio blob with specific type
+                const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/mpeg' });
+                
+                console.log("Recording completed: ", {
+                    mimeType: audioBlob.type,
+                    size: audioBlob.size
+                });
+                
                 transcribeAudio(audioBlob);
                 
                 // Stop all tracks in the stream to release the microphone
@@ -79,6 +94,28 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Error starting recording:', error);
             showMessage(`Could not access the microphone: ${error.message}`, 'error');
         }
+    }
+
+    // Find supported MIME type
+    function getSupportedMimeType() {
+        // Try common audio formats in order of preference
+        const mimeTypes = [
+            'audio/mp3',
+            'audio/mpeg',
+            'audio/webm',
+            'audio/ogg',
+            'audio/wav'
+        ];
+        
+        for (const type of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(type)) {
+                console.log(`Browser supports recording in ${type} format`);
+                return type;
+            }
+        }
+        
+        console.warn('No preferred MIME types are supported by this browser');
+        return null;
     }
 
     // Stop recording function
@@ -107,7 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             // Create form data for the API request
             const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.wav');
+            formData.append('audio', audioBlob, 'recording.mp3'); // Use .mp3 extension for consistent handling
             formData.append('webhook_url', webhookUrl);
             
             // Send the audio to the backend
@@ -117,8 +154,14 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Transcription failed');
+                let errorMessage = 'Transcription failed';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch (e) {
+                    console.error('Error parsing error response:', e);
+                }
+                throw new Error(errorMessage);
             }
             
             const data = await response.json();
