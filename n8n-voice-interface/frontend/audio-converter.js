@@ -1,55 +1,45 @@
 /**
- * Moduł do konwersji i optymalizacji formatu audio po stronie przeglądarki
- * dla lepszej kompatybilności z API OpenAI.
+ * Prostszy i bardziej niezawodny konwerter audio dla przeglądarki
  */
 class AudioConverter {
     /**
-     * Konwertuje Blob audio do formatu WAV lub MP3
+     * Konwertuje Blob audio do formatu WAV
      * 
      * @param {Blob} audioBlob - Oryginalny Blob audio z MediaRecorder
-     * @param {string} targetFormat - Format docelowy ('wav' lub 'mp3')
-     * @param {Object} options - Opcje konwersji
-     * @returns {Promise<Blob>} - Skonwertowany Blob audio
+     * @returns {Promise<Blob>} - Skonwertowany Blob audio w formacie WAV
      */
-    static async convertAudioFormat(audioBlob, targetFormat = 'wav', options = {}) {
-        console.log(`Rozpoczynam konwersję audio do formatu: ${targetFormat}`);
+    static async convertToWAV(audioBlob) {
+        console.log(`Rozpoczynam konwersję audio do WAV. Obecny format: ${audioBlob.type}, rozmiar: ${audioBlob.size} bajtów`);
         
-        // Domyślne parametry
-        const defaultOptions = {
-            sampleRate: 44100,     // 44.1 kHz (standard CD)
-            channels: 1,           // Mono (wymagane przez OpenAI)
-            bitDepth: 16           // 16-bit PCM
-        };
-        
-        // Połącz z opcjami użytkownika
-        const settings = { ...defaultOptions, ...options };
-        console.log("Parametry konwersji:", settings);
+        // Jeśli już mamy WAV, po prostu go zwróć
+        if (audioBlob.type === 'audio/wav') {
+            console.log("Plik już jest w formacie WAV, pomijam konwersję");
+            return audioBlob;
+        }
         
         try {
             // Utwórz AudioContext
             const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            console.log(`Utworzono AudioContext, sample rate: ${audioContext.sampleRate}Hz`);
             
             // Konwertuj Blob na ArrayBuffer
             const arrayBuffer = await audioBlob.arrayBuffer();
+            console.log(`Odczytano ${arrayBuffer.byteLength} bajtów danych audio`);
             
             // Dekoduj audio
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
             console.log("Zdekodowano audio:", {
-                duration: audioBuffer.duration,
+                duration: audioBuffer.duration.toFixed(2) + "s",
                 numberOfChannels: audioBuffer.numberOfChannels,
-                sampleRate: audioBuffer.sampleRate
+                sampleRate: audioBuffer.sampleRate + "Hz",
+                length: audioBuffer.length + " próbek"
             });
             
-            // Konwertuj do wybranego formatu
-            if (targetFormat === 'wav') {
-                return this._convertToWAV(audioBuffer, settings);
-            } else if (targetFormat === 'mp3') {
-                // MP3 jest trudniejszy do implementacji w czystym JS
-                // Tutaj tylko przygotowujemy dane, faktyczną konwersję zrobi backend
-                return this._prepareForMP3Conversion(audioBuffer, settings);
-            }
+            // Konwertuj AudioBuffer do WAV
+            const wavBlob = this._encodeWAV(audioBuffer);
+            console.log(`Zakończono konwersję do WAV, nowy rozmiar: ${wavBlob.size} bajtów`);
             
-            throw new Error(`Nieobsługiwany format: ${targetFormat}`);
+            return wavBlob;
         } catch (error) {
             console.error("Błąd podczas konwersji audio:", error);
             // W razie błędu, zwróć oryginalny blob
@@ -62,82 +52,36 @@ class AudioConverter {
      * 
      * @private
      * @param {AudioBuffer} audioBuffer - Audio w formacie AudioBuffer
-     * @param {Object} options - Opcje konwersji
      * @returns {Blob} - Audio w formacie WAV
      */
-    static _convertToWAV(audioBuffer, options) {
-        console.log("Konwertuję do WAV z opcjami:", options);
-        
-        const { sampleRate, channels, bitDepth } = options;
+    static _encodeWAV(audioBuffer) {
+        // Parametry WAV
+        const numChannels = audioBuffer.numberOfChannels;
+        const sampleRate = audioBuffer.sampleRate;
+        const bitDepth = 16; // 16-bit audio (standard PCM)
         const bytesPerSample = bitDepth / 8;
-        const blockAlign = channels * bytesPerSample;
         
-        // Przygotuj próbki audio
+        // Konwertuj do mono jeśli wielokanałowe
         let samples;
-        if (audioBuffer.numberOfChannels === 1) {
-            // Już mono
+        if (numChannels === 1) {
             samples = audioBuffer.getChannelData(0);
         } else {
-            // Miksuj do mono jeśli wielokanałowe
+            // Miksuj do mono
             samples = new Float32Array(audioBuffer.length);
-            for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+            for (let channel = 0; channel < numChannels; channel++) {
                 const channelData = audioBuffer.getChannelData(channel);
                 for (let i = 0; i < samples.length; i++) {
-                    samples[i] += channelData[i] / audioBuffer.numberOfChannels;
+                    samples[i] += channelData[i] / numChannels;
                 }
             }
         }
         
-        // Resampling do docelowej częstotliwości próbkowania jeśli potrzebny
-        if (audioBuffer.sampleRate !== sampleRate) {
-            samples = this._resampleAudio(samples, audioBuffer.sampleRate, sampleRate);
-        }
-        
-        // Tworzymy bufor dla pliku WAV
-        const wavBuffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+        // Tworzymy bufor dla pliku WAV (header + data)
+        const dataSize = samples.length * bytesPerSample;
+        const wavBuffer = new ArrayBuffer(44 + dataSize);
         const view = new DataView(wavBuffer);
         
-        // Nagłówki WAV
-        this._writeWAVHeaders(view, {
-            sampleRate: sampleRate,
-            channels: channels,
-            bitDepth: bitDepth,
-            dataSize: samples.length * bytesPerSample
-        });
-        
-        // Zapisz próbki audio
-        const offset = 44;
-        this._floatTo16BitPCM(view, offset, samples);
-        
-        // Zwróć jako Blob
-        return new Blob([wavBuffer], { type: 'audio/wav' });
-    }
-    
-    /**
-     * Przygotowuje AudioBuffer do konwersji MP3 - tutaj konwersja do WAV jako fallback
-     * 
-     * @private
-     * @param {AudioBuffer} audioBuffer - Audio w formacie AudioBuffer
-     * @param {Object} options - Opcje konwersji
-     * @returns {Blob} - Audio w formacie przygotowanym do konwersji MP3
-     */
-    static _prepareForMP3Conversion(audioBuffer, options) {
-        console.log("Przygotowuję dane do konwersji MP3 (fallback do WAV)");
-        // Jako że konwersja do MP3 w przeglądarce jest złożona,
-        // używamy WAV jako formatu pośredniego, który zostanie przekonwertowany po stronie serwera
-        return this._convertToWAV(audioBuffer, options);
-    }
-    
-    /**
-     * Zapisuje nagłówki WAV do DataView
-     * 
-     * @private
-     * @param {DataView} view - DataView do zapisu nagłówków
-     * @param {Object} options - Parametry nagłówka
-     */
-    static _writeWAVHeaders(view, options) {
-        const { sampleRate, channels, bitDepth, dataSize } = options;
-        
+        // Zapisz nagłówek WAV
         // "RIFF" chunk descriptor
         this._writeString(view, 0, 'RIFF');
         view.setUint32(4, 36 + dataSize, true);
@@ -145,17 +89,31 @@ class AudioConverter {
         
         // "fmt " sub-chunk
         this._writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);           // Subchunk1Size
-        view.setUint16(20, 1, true);            // AudioFormat (1 = PCM)
-        view.setUint16(22, channels, true);     // NumChannels
-        view.setUint32(24, sampleRate, true);   // SampleRate
-        view.setUint32(28, sampleRate * channels * bitDepth / 8, true); // ByteRate
-        view.setUint16(32, channels * bitDepth / 8, true);              // BlockAlign
-        view.setUint16(34, bitDepth, true);                             // BitsPerSample
+        view.setUint32(16, 16, true);             // Subchunk1Size (16 for PCM)
+        view.setUint16(20, 1, true);              // AudioFormat (1 = PCM)
+        view.setUint16(22, 1, true);              // NumChannels (1 = mono)
+        view.setUint32(24, sampleRate, true);     // SampleRate
+        view.setUint32(28, sampleRate * 1 * bytesPerSample, true); // ByteRate
+        view.setUint16(32, 1 * bytesPerSample, true);    // BlockAlign
+        view.setUint16(34, bitDepth, true);       // BitsPerSample
         
         // "data" sub-chunk
         this._writeString(view, 36, 'data');
-        view.setUint32(40, dataSize, true);     // Subchunk2Size
+        view.setUint32(40, dataSize, true);      // Subchunk2Size
+        
+        // Konwertuj Float32 próbki do 16-bit PCM i zapisuj
+        const offset = 44;
+        for (let i = 0; i < samples.length; i++) {
+            // Limit to [-1.0, 1.0] range
+            const sample = Math.max(-1, Math.min(1, samples[i]));
+            // Convert to 16-bit value
+            const value = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            // Write 16-bit sample
+            view.setInt16(offset + (i * 2), value, true);
+        }
+        
+        // Utwórz Blob z prawidłowym typem MIME
+        return new Blob([wavBuffer], { type: 'audio/wav' });
     }
     
     /**
@@ -173,70 +131,51 @@ class AudioConverter {
     }
     
     /**
-     * Konwertuje próbki Float32 do 16-bit PCM
+     * Metoda główna do optymalizacji audio dla OpenAI API
      * 
-     * @private
-     * @param {DataView} view - DataView do zapisu
-     * @param {number} offset - Offset w bajtach
-     * @param {Float32Array} samples - Próbki audio
-     */
-    static _floatTo16BitPCM(view, offset, samples) {
-        for (let i = 0; i < samples.length; i++) {
-            const s = Math.max(-1, Math.min(1, samples[i]));
-            const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            view.setInt16(offset + i * 2, val, true);
-        }
-    }
-    
-    /**
-     * Prostý resampling audio
-     * 
-     * @private
-     * @param {Float32Array} samples - Próbki audio
-     * @param {number} fromSampleRate - Oryginalna częstotliwość próbkowania
-     * @param {number} toSampleRate - Docelowa częstotliwość próbkowania
-     * @returns {Float32Array} - Zresamplowane próbki
-     */
-    static _resampleAudio(samples, fromSampleRate, toSampleRate) {
-        if (fromSampleRate === toSampleRate) {
-            return samples;
-        }
-        
-        const ratio = fromSampleRate / toSampleRate;
-        const newLength = Math.round(samples.length / ratio);
-        const result = new Float32Array(newLength);
-        
-        for (let i = 0; i < newLength; i++) {
-            const pos = i * ratio;
-            const leftPos = Math.floor(pos);
-            const rightPos = Math.ceil(pos);
-            const weight = pos - leftPos;
-            
-            if (rightPos >= samples.length) {
-                result[i] = samples[leftPos];
-            } else {
-                result[i] = samples[leftPos] * (1 - weight) + samples[rightPos] * weight;
-            }
-        }
-        
-        return result;
-    }
-    
-    /**
-     * Konwertuje i optymalizuje Blob audio do formatu najlepszego dla OpenAI
-     * 
-     * @param {Blob} audioBlob - Oryginalny Blob audio
-     * @returns {Promise<Blob>} - Zoptymalizowany Blob audio
+     * @param {Blob} audioBlob - Oryginalny blob audio
+     * @returns {Promise<Object>} - Obiekt zawierający zoptymalizowane audio i jego metadane
      */
     static async optimizeForOpenAI(audioBlob) {
-        console.log("Optymalizuję audio dla OpenAI API:", audioBlob);
+        console.log("Optymalizuję audio dla OpenAI API", audioBlob);
         
-        // WAV to najbardziej niezawodny format dla API OpenAI
-        return await this.convertAudioFormat(audioBlob, 'wav', {
-            sampleRate: 44100,  // 44.1kHz
-            channels: 1,        // Mono
-            bitDepth: 16        // 16-bit
-        });
+        try {
+            // Konwertuj do WAV (najlepszy format dla OpenAI)
+            const wavBlob = await this.convertToWAV(audioBlob);
+            
+            // Generuj unikalną nazwę pliku z odpowiednim rozszerzeniem
+            const timestamp = new Date().getTime();
+            const filename = `recording-${timestamp}.wav`;
+            
+            return {
+                blob: wavBlob,
+                filename: filename,
+                mimeType: 'audio/wav'
+            };
+        } catch (error) {
+            console.error("Błąd podczas optymalizacji audio:", error);
+            
+            // W przypadku błędu, zwróć oryginalny blob z właściwym rozszerzeniem
+            let filename = `recording-${Date.now()}`;
+            let mimeType = audioBlob.type || 'audio/webm';
+            
+            if (mimeType.includes('wav')) {
+                filename += '.wav';
+            } else if (mimeType.includes('mp3') || mimeType.includes('mpeg')) {
+                filename += '.mp3';
+            } else if (mimeType.includes('webm')) {
+                filename += '.webm';
+            } else {
+                filename += '.wav'; // Domyślnie WAV
+                mimeType = 'audio/wav';
+            }
+            
+            return {
+                blob: audioBlob,
+                filename: filename,
+                mimeType: mimeType
+            };
+        }
     }
 }
 
