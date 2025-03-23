@@ -109,9 +109,8 @@
     let microphoneStream;
     let silenceDetectionInterval;
     
-    // Silence detection settings - obniżamy próg i dodajemy debug
-    // UWAGA: Te wartości są nadpisywane w funkcji startSilenceDetection
-    const SILENCE_THRESHOLD = 10; // Obniżony próg do wykrywania cichszej mowy
+    // Silence detection settings
+    const SILENCE_THRESHOLD = 15; // Threshold below which is considered silence
     const SILENCE_DURATION = 1500; // 1.5 seconds of silence to trigger stop
     const CHECK_INTERVAL = 100;   // Check every 100ms
     let silenceStartTime = null;
@@ -613,17 +612,15 @@
         });
     }
 
-    // Find supported MIME type with optimal audio quality
+    // Find supported MIME type
     function getSupportedMimeType() {
-        // Preferencja dla formatów obsługiwanych przez OpenAI
+        // Try common audio formats in order of preference
         const mimeTypes = [
-            'audio/wav',              // Najlepsza kompatybilność po konwersji
-            'audio/webm;codecs=opus', // Dobra jakość głosu
-            'audio/mpeg',             // MP3
-            'audio/mp3',              
-            'audio/webm',             
-            'audio/ogg;codecs=opus',  
-            'audio/ogg'               
+            'audio/mp3',
+            'audio/mpeg',
+            'audio/webm',
+            'audio/ogg',
+            'audio/wav'
         ];
         
         for (const type of mimeTypes) {
@@ -705,13 +702,8 @@
         }
     });
     
-    // Expose important functions and variables to global scope for manual controls
-    window.startNewRecording = startNewRecording;
-    window.stopCurrentRecording = stopCurrentRecording;
+    // Expose necessary functions to other scripts
     window.showMessage = showMessage;
-    window.audioAnalyser = null; // Will be set in startListening
-    window.isListening = false;
-    window.isRecording = false;
     
     // Show initial status
     statusMessage.textContent = 'Gotowy do słuchania';
