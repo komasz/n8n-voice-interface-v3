@@ -122,8 +122,6 @@ async def get_n8n_response(request: dict):
     """
     Get the last n8n response, including webhook_url for verification.
     """
-    global last_n8n_response
-    
     if not last_n8n_response:
         raise HTTPException(status_code=404, detail="No n8n response available")
     
@@ -164,7 +162,7 @@ async def speak_endpoint(request: TextRequest):
     """
     Receive text and convert it to speech.
     """
-    global last_n8n_response
+    global last_n8n_response, last_tts_file_path
     
     try:
         text = request.text
@@ -177,7 +175,6 @@ async def speak_endpoint(request: TextRequest):
         audio_path = await text_to_speech(text)
         
         # Store the TTS file path
-        global last_tts_file_path
         last_tts_file_path = audio_path
         
         # Return the audio file
@@ -203,6 +200,7 @@ async def webhook_endpoint(
     Bidirectional webhook endpoint for n8n integration.
     Can receive text from n8n and return audio, or receive audio and send text to n8n.
     """
+    global last_n8n_response, last_tts_file_path
     content_type = request.headers.get("content-type", "")
     
     try:
@@ -223,7 +221,6 @@ async def webhook_endpoint(
             n8n_response = await send_to_n8n(webhook_url, {"transcription": transcribed_text})
             
             # Store the response globally
-            global last_n8n_response
             if isinstance(n8n_response, dict) and "text" in n8n_response:
                 last_n8n_response = n8n_response
             
@@ -241,14 +238,12 @@ async def webhook_endpoint(
                 raise HTTPException(status_code=400, detail="Missing 'text' field in request body")
             
             # Store as last n8n response
-            global last_n8n_response
             last_n8n_response = {"text": body["text"]}
             
             # Convert text to speech
             audio_path = await text_to_speech(body["text"])
             
             # Store the TTS file path
-            global last_tts_file_path
             last_tts_file_path = audio_path
             
             # Return the audio file
