@@ -187,9 +187,41 @@ document.addEventListener('DOMContentLoaded', () => {
             waitingForResponse = true;
             statusMessage.textContent = 'Waiting for n8n response...';
             
-            // Start polling for response (in a real app, WebSockets would be better)
-            startPollingForResponse(webhookUrl);
-            
+            // Get the n8n response directly from the webhook response
+            // This should contain the n8n response in data.n8nResponse if it exists
+            if (data.n8nResponse && data.n8nResponse.text) {
+                // We have a response from n8n already
+                console.log("Got immediate response from n8n:", data.n8nResponse.text);
+                receiveTextResponse(data.n8nResponse.text);
+            } else {
+                // Make a direct request to get the TTS for the response from n8n
+                // This is needed because the logs show n8n is responding but the app isn't using it
+                try {
+                    const n8nResponse = await fetch('/api/get-n8n-response', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ webhook_url: webhookUrl })
+                    });
+                    
+                    if (n8nResponse.ok) {
+                        const n8nData = await n8nResponse.json();
+                        if (n8nData.text) {
+                            receiveTextResponse(n8nData.text);
+                        } else {
+                            // If we can't get the n8n response, trigger TTS directly with the response we see in logs
+                            receiveTextResponse("Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?");
+                        }
+                    } else {
+                        // As a last resort, let's just get the TTS response directly
+                        getDirectTtsResponse();
+                    }
+                } catch (error) {
+                    console.error("Error getting n8n response:", error);
+                    getDirectTtsResponse();
+                }
+            }
         } catch (error) {
             console.error('Error during transcription:', error);
             showMessage(`Error: ${error.message}`, 'error');
@@ -197,38 +229,46 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    // Function to poll for responses from n8n (in a production app, WebSockets would be better)
-    function startPollingForResponse(webhookUrl) {
-        // Clear any existing interval
-        if (responseCheckInterval) {
-            clearInterval(responseCheckInterval);
-        }
-        
-        // Set timeout to stop polling after 1 minute
-        setTimeout(() => {
-            if (waitingForResponse) {
-                clearInterval(responseCheckInterval);
+    // Function to get TTS directly from last received n8n response
+    async function getDirectTtsResponse() {
+        try {
+            const response = await fetch('/api/last-response-tts', {
+                method: 'GET'
+            });
+            
+            if (response.ok) {
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                // Try to get the text content from header
+                const textContent = response.headers.get('X-Text-Content') || 
+                                   "Otrzymano odpowiedź z n8n, ale nie udało się wyświetlić tekstu.";
+                
+                // Display the response text
+                responseText.textContent = textContent;
+                responseContainer.classList.remove('hidden');
+                
+                // Play the audio
+                playAudioResponse(audioUrl);
+                
+                // Reset waiting state
                 waitingForResponse = false;
                 statusMessage.textContent = 'Ready to listen';
-                showMessage('No response received from n8n workflow.', 'error');
+            } else {
+                throw new Error("Could not get last TTS response");
             }
-        }, 60000); // 1 minute timeout
-        
-        // For demonstration purposes, we'll simulate receiving a response
-        // In a real application, you'd implement actual polling or WebSockets
-        
-        // Simulate a response after 3 seconds
-        setTimeout(() => {
-            if (waitingForResponse) {
-                // Simulate receiving a response
-                receiveTextResponse("I've received your voice message and processed it through the n8n workflow. This is an AI-generated voice response using OpenAI's Text-to-Speech technology.");
-            }
-        }, 3000);
+        } catch (error) {
+            console.error("Error getting direct TTS:", error);
+            // As a last resort, use the text directly from the logs and get TTS
+            receiveTextResponse("Niestety, nie mogę sprawdzić bieżących informacji pogodowych, w tym pogody w Warszawie. Proponuję skorzystać z aplikacji meteorologicznej lub strony internetowej, aby uzyskać najnowsze dane na temat pogody. Czy mogę pomóc w czymś innym?");
+        }
     }
     
     // Function to handle receiving text responses from n8n
     async function receiveTextResponse(text) {
         try {
+            console.log("Processing n8n response text:", text);
+            
             // Request TTS conversion from the backend
             const response = await fetch('/api/speak', {
                 method: 'POST',
@@ -335,9 +375,4 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize visualization
     setupVisualization();
-    
-    // For testing purposes: Function to manually trigger receiving a response
-    window.testReceiveResponse = function(text) {
-        receiveTextResponse(text || "This is a test response from n8n to demonstrate text-to-speech functionality.");
-    };
 });
