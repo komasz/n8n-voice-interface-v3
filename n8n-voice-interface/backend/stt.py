@@ -32,6 +32,8 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
         )
     logger.info("OpenAI API key found in environment")
 
+    temp_file_path = None
+    
     try:
         # Get content type from the uploaded file
         content_type = audio_file.content_type
@@ -44,10 +46,12 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
         file_extension = ".mp3"  # Default
         if "webm" in base_content_type:
             file_extension = ".webm"
-        elif "wav" in base_content_type:
+        elif "wav" in base_content_type or "wave" in base_content_type:
             file_extension = ".wav"
         elif "ogg" in base_content_type:
             file_extension = ".ogg"
+        elif "mp4" in base_content_type or "m4a" in base_content_type:
+            file_extension = ".m4a"
             
         logger.info(f"Using file extension: {file_extension} for content type: {base_content_type}")
 
@@ -68,16 +72,30 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
             "Authorization": f"Bearer {OPENAI_API_KEY}"
         }
 
-        # Prepare the file and form data, using the base content type without codec info
+        # Prepare the file and form data
         with open(temp_file_path, "rb") as file:
+            # Simplify MIME type for OpenAI API - remove codec information
+            mime_type_for_api = base_content_type
+            
+            # Force specific formats that we know work well
+            if "webm" in mime_type_for_api:
+                # OpenAI docs mention support for webm
+                mime_type_for_api = "audio/webm"
+            elif "wav" in mime_type_for_api or "wave" in mime_type_for_api:
+                mime_type_for_api = "audio/wav"
+            elif "mp3" in mime_type_for_api or "mpeg" in mime_type_for_api:
+                mime_type_for_api = "audio/mp3"
+            
+            logger.info(f"Using MIME type for API request: {mime_type_for_api}")
+            
             files = {
-                "file": (temp_file_name, file, base_content_type),
+                "file": (os.path.basename(temp_file_path), file, mime_type_for_api),
                 "model": (None, STT_MODEL),
                 "language": (None, "pl")  # Force Polish language recognition
             }
             
             # Make the API request
-            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL} with content type: {base_content_type}")
+            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
             response = requests.post(
                 API_URL,
                 headers=headers,
@@ -86,8 +104,9 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
 
         # Clean up temporary file
         try:
-            os.remove(temp_file_path)
-            logger.info(f"Removed temporary file: {temp_file_path}")
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+                logger.info(f"Removed temporary file: {temp_file_path}")
         except Exception as e:
             logger.warning(f"Failed to remove temporary file: {str(e)}")
 
