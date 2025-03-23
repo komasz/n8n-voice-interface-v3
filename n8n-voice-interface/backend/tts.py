@@ -30,11 +30,6 @@ async def text_to_speech(text: str) -> str:
         logger.error("OpenAI API key not found in environment")
         raise Exception("OPENAI_API_KEY environment variable not set")
     
-    # Check if text is empty and provide a fallback response
-    if not text or text.strip() == "":
-        logger.warning("Empty text received for TTS. Using fallback message.")
-        text = "I'm sorry, I didn't receive a proper response from the workflow. Please try again or check your n8n configuration."
-    
     try:
         # Create a unique filename for the output
         temp_dir = tempfile.gettempdir()
@@ -49,9 +44,10 @@ async def text_to_speech(text: str) -> str:
         # Prepare the request payload
         payload = {
             "model": TTS_MODEL,
-            "voice": "ash",  # Changed to "ash" as requested
+            "voice": "ash",  # Voice stays as 'ash'
             "input": text,
-            "instructions": "Speak in a natural, conversational tone.",
+            # Add instructions to speak in Polish and use Polish accent
+            "instructions": "Mów po polsku z polskim akcentem. Speak in Polish language with a natural Polish accent.",
         }
         
         # Make the API request
