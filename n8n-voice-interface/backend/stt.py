@@ -10,7 +10,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-# For transcription, we should use whisper-1 first to verify functionality
 STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -55,11 +54,12 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
             # Set explicit MIME type to audio/mpeg as a safe default
             files = {
                 "file": (os.path.basename(temp_file_path), file, "audio/mpeg"),
-                "model": (None, STT_MODEL)
+                "model": (None, STT_MODEL),
+                "language": (None, "pl")  # Force Polish language recognition
             }
             
             # Make the API request
-            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
+            logger.info(f"Sending request to OpenAI API using model: {STT_MODEL} with language: pl")
             response = requests.post(
                 API_URL,
                 headers=headers,
