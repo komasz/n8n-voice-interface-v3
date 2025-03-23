@@ -15,6 +15,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Audio player for responses
     let audioPlayer = new Audio();
     
+    // Processing notification sound
+    const processingSound = new Audio('audio/processing-beep.mp3');
+    
     // Status tracking
     let activeRequests = 0;
     
@@ -238,6 +241,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (silenceDuration >= SILENCE_DURATION) {
                         console.log(`Cisza wykryta przez ${silenceDuration}ms. Kończę nagrywanie.`);
                         stopCurrentRecording();
+                        
+                        // Play the processing notification sound
+                        processingSound.play().catch(err => console.error("Nie można odtworzyć dźwięku powiadomienia:", err));
                         
                         // Reset for next recording
                         speechDetected = false;
