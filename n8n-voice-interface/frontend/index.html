@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N8N Voice Interface</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>N8N Voice Interface</h1>
+            <p class="subtitle">Speak to trigger your n8n workflows</p>
+        </header>
+
+        <main>
+            <div class="voice-interface">
+                <div id="status-container">
+                    <div id="status-message">Ready to listen</div>
+                    <div id="visualization-container">
+                        <div class="visualization-bar"></div>
+                        <div class="visualization-bar"></div>
+                        <div class="visualization-bar"></div>
+                        <div class="visualization-bar"></div>
+                        <div class="visualization-bar"></div>
+                    </div>
+                </div>
+
+                <div class="microphone-container">
+                    <button id="record-button" class="record-button">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                </div>
+
+                <div id="transcription-container" class="hidden">
+                    <h3>Transcription:</h3>
+                    <div id="transcription-text"></div>
+                </div>
+            </div>
+
+            <div id="message-container" class="hidden">
+                <div id="message-text"></div>
+            </div>
+
+            <div class="settings-container">
+                <h3>Settings</h3>
+                <div class="form-group">
+                    <label for="webhook-url">N8N Webhook URL:</label>
+                    <input type="text" id="webhook-url" placeholder="https://your-n8n-instance/webhook/path">
+                    <button id="save-settings" class="btn">Save</button>
+                </div>
+            </div>
+
+            <div class="info-container">
+                <div class="info-box">
+                    <h3>How to Use</h3>
+                    <ol>
+                        <li>Enter your n8n webhook URL in the settings</li>
+                        <li>Click the microphone button and start speaking</li>
+                        <li>Your speech will be transcribed and sent to n8n</li>
+                        <li>Check your n8n workflow for the incoming data</li>
+                    </ol>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Powered by OpenAI's gpt-4o-transcribe | <a href="https://github.com/yourusername/n8n-voice-interface" target="_blank">View on GitHub</a></p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

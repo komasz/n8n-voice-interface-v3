@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  n8n-voice-interface:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - STT_MODEL=gpt-4o-transcribe
+      - PORT=8000
+    volumes:
+      - ./frontend:/app/frontend
+      - ./backend:/app/backend
+    restart: unless-stopped
