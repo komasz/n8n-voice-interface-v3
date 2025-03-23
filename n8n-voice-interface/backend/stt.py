@@ -10,7 +10,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-# For transcription, we should use whisper-1 first to verify functionality
 STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -34,14 +33,23 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
     logger.info("OpenAI API key found in environment")
 
     try:
-        # Log information about the file
+        # Get content type from the uploaded file
         content_type = audio_file.content_type
-        file_name = audio_file.filename
-        logger.info(f"File from request: {file_name}, content-type: {content_type}")
-        
-        # Save the uploaded file to a temporary location
+        logger.info(f"File from request: {audio_file.filename}, content-type: {content_type}")
+
+        # Extract file extension from content type
+        file_extension = ".mp3"  # Default
+        if content_type == "audio/webm":
+            file_extension = ".webm"
+        elif content_type == "audio/wav":
+            file_extension = ".wav"
+        elif content_type == "audio/ogg":
+            file_extension = ".ogg"
+
+        # Save the uploaded file to a temporary location with correct extension
         temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{audio_file.filename}")
+        temp_file_name = f"{uuid.uuid4()}{file_extension}"
+        temp_file_path = os.path.join(temp_dir, temp_file_name)
 
         with open(temp_file_path, "wb") as temp_file:
             # Read the file in chunks
@@ -55,11 +63,10 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
             "Authorization": f"Bearer {OPENAI_API_KEY}"
         }
 
-        # Prepare the file and form data
+        # Prepare the file and form data, using the actual content type
         with open(temp_file_path, "rb") as file:
-            # Set explicit MIME type to audio/mpeg as a safe default
             files = {
-                "file": (os.path.basename(temp_file_path), file, "audio/mpeg"),
+                "file": (temp_file_name, file, content_type),
                 "model": (None, STT_MODEL),
                 "language": (None, "pl")  # Force Polish language recognition
             }
