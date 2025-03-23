@@ -273,6 +273,45 @@ h1 {
     box-shadow: var(--box-shadow);
 }
 
+/* Tabs */
+.tabs {
+    display: flex;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #ddd;
+}
+
+.tab-button {
+    background-color: transparent;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-color);
+    cursor: pointer;
+    margin-right: 0.5rem;
+    border-bottom: 3px solid transparent;
+    transition: var(--transition);
+}
+
+.tab-button:hover {
+    color: var(--primary-color);
+}
+
+.tab-button.active {
+    color: var(--primary-color);
+    border-bottom: 3px solid var(--primary-color);
+}
+
+.tab-content {
+    display: none;
+    padding-top: 1rem;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Form elements */
 .form-group {
     margin-top: 1rem;
 }
@@ -283,13 +322,24 @@ label {
     font-weight: 500;
 }
 
-input[type="text"] {
+input[type="text"], textarea {
     width: 100%;
     padding: 0.75rem;
     border: 1px solid #ccc;
     border-radius: var(--border-radius);
     font-size: 1rem;
     margin-bottom: 1rem;
+    font-family: inherit;
+}
+
+textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.button-group {
+    display: flex;
+    gap: 1rem;
 }
 
 .btn {
@@ -305,6 +355,33 @@ input[type="text"] {
 
 .btn:hover {
     background-color: var(--secondary-color);
+}
+
+.btn-secondary {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-secondary:hover {
+    background-color: var(--primary-color);
+}
+
+.btn-secondary i, .btn i {
+    font-size: 0.9rem;
+}
+
+.btn:disabled, .btn-secondary:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
 }
 
 /* Info Box */
@@ -369,6 +446,14 @@ footer a:hover {
     display: none;
 }
 
+/* Spinner animation */
+@keyframes spinner {
+    to {transform: rotate(360deg);}
+}
+.fa-spinner {
+    animation: spinner 1s linear infinite;
+}
+
 /* Scrollbar styles */
 .conversation-container::-webkit-scrollbar {
     width: 8px;
@@ -406,5 +491,25 @@ footer a:hover {
     
     .conversation-container {
         max-height: 400px;
+    }
+    
+    .tabs {
+        flex-direction: column;
+        border-bottom: none;
+    }
+    
+    .tab-button {
+        width: 100%;
+        text-align: center;
+        border-bottom: 1px solid #ddd;
+        margin-right: 0;
+    }
+    
+    .tab-button.active {
+        border-bottom: 3px solid var(--primary-color);
+    }
+    
+    .button-group {
+        flex-direction: column;
     }
 }
