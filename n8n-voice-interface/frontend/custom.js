@@ -23,14 +23,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             // Najpierw odtwórz powitanie
             console.log('Powitanie rozpoczęte');
-            await window.playGreeting();
+            const greetingSuccess = await window.playGreeting();
             
-            console.log('Powitanie zakończone, uruchamiam nasłuchiwanie');
+            // Nawet jeśli powitanie się nie udało, kontynuuj z nasłuchiwaniem
+            console.log('Powitanie ' + (greetingSuccess ? 'zakończone' : 'nie powiodło się') + ', uruchamiam nasłuchiwanie');
             
             // Następnie uruchom ciągłe nasłuchiwanie
             await window.toggleContinuousListening();
         } catch (error) {
             console.error('error:', error);
+            
+            // Mimo błędu, spróbuj uruchomić nasłuchiwanie
+            try {
+                console.log('Próba uruchomienia nasłuchiwania mimo błędu powitania...');
+                await window.toggleContinuousListening();
+            } catch (listeningError) {
+                console.error('Nie udało się uruchomić nasłuchiwania:', listeningError);
+            }
         }
     }, 2000);
 });
