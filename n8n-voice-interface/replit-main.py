@@ -3,31 +3,32 @@ Replit entry point for N8N Voice Interface
 """
 import os
 import sys
-import subprocess
 
-# Upewnij się, że katalog dla plików audio istnieje
-os.makedirs("n8n-voice-interface/frontend/audio", exist_ok=True)
-
-# Set default STT model to gpt-4o-transcribe if not already set
+# Upewnij się, że STT_MODEL jest ustawiony
 if "STT_MODEL" not in os.environ:
     os.environ["STT_MODEL"] = "gpt-4o-transcribe"
 
-# Add the current directory to the path so we can import from backend
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Utwórz niezbędne katalogi, jeśli nie istnieją
+temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp", "audio")
+os.makedirs(temp_dir, exist_ok=True)
 
-# Import and run the app
+# Dodaj ścieżkę do projektu
+project_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "n8n-voice-interface")
+sys.path.append(project_path)
+
+# Importuj aplikację
 from backend.app import app
 import uvicorn
 
 if __name__ == "__main__":
-    # Get port from environment (Replit sets this)
+    # Pobierz port z środowiska (Replit ustawia to)
     port = int(os.environ.get("PORT", 8080))
     
     print("Starting N8N Voice Interface...")
     print(f"Using STT model: {os.environ.get('STT_MODEL')}")
     print(f"Port: {port}")
     
-    # Run the application
+    # Uruchom aplikację
     uvicorn.run(
         "backend.app:app", 
         host="0.0.0.0", 
