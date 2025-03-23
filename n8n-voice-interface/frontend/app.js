@@ -38,6 +38,34 @@ const MAX_CONVERSATION_ENTRIES = 10; // Maksymalna liczba wpisów konwersacji do
 
 // ====== GLOBALNE FUNKCJE ======
 
+// Funkcja do znalezienia obsługiwanego typu MIME
+window.getSupportedMimeType = function() {
+    // Lista typów MIME obsługiwanych przez OpenAI API
+    const openaiSupportedMimeTypes = [
+        'audio/mp3',
+        'audio/mpeg',
+        'audio/wav',
+        'audio/webm',
+        'audio/mp4',
+        'audio/m4a',
+        'audio/ogg'
+    ];
+    
+    // Sprawdź, które formaty są obsługiwane zarówno przez przeglądarkę, jak i OpenAI
+    for (const type of openaiSupportedMimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+            console.log(`Przeglądarka wspiera nagrywanie w formacie ${type} (obsługiwane przez OpenAI)`);
+            return type;
+        }
+    }
+    
+    // Jeśli żaden z preferowanych typów nie jest obsługiwany, użyj domyślnego
+    console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
+    
+    // W ostateczności pozwól przeglądarce wybrać domyślny format
+    return '';
+};
+
 // Funkcja do rozpoczynania nasłuchiwania
 window.startListening = async function() {
     try {
@@ -296,9 +324,12 @@ window.startNewRecording = function() {
     recordingId++;
     const currentRecordingId = recordingId;
     
+    // Ustal format MIME dla nagrywania
+    const mimeType = window.getSupportedMimeType();
+    
     // Setup mediaRecorder event handlers
     mediaRecorder.onstart = () => {
-        console.log(`Nagrywanie #${currentRecordingId} rozpoczęte`);
+        console.log(`Nagrywanie #${currentRecordingId} rozpoczęte (format: ${mediaRecorder.mimeType || "domyślny"})`);
         isRecording = true;
     };
     
@@ -310,15 +341,26 @@ window.startNewRecording = function() {
         console.log(`Nagrywanie #${currentRecordingId} zakończone`);
         isRecording = false;
         
-        // Create audio blob with specific type
-        const mimeType = window.getSupportedMimeType();
-        const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/mpeg' });
+        // Create audio blob with correct MIME type
+        // WAŻNE: Użyj faktycznego typu MIME z MediaRecorder, nie próbuj go zmieniać
+        const actualMimeType = mediaRecorder.mimeType || "audio/webm";
+        const audioBlob = new Blob(audioChunks, { type: actualMimeType });
         
-        console.log(`Nagranie #${currentRecordingId}: ${audioBlob.size} bajtów`);
+        console.log(`Nagranie #${currentRecordingId}: ${audioBlob.size} bajtów, typ: ${actualMimeType}`);
+        
+        // Dodaj prawidłowe rozszerzenie pliku na podstawie typu MIME
+        let fileExtension = '.webm'; // domyślne
+        if (actualMimeType.includes('mp3') || actualMimeType.includes('mpeg')) {
+            fileExtension = '.mp3';
+        } else if (actualMimeType.includes('wav')) {
+            fileExtension = '.wav';
+        } else if (actualMimeType.includes('ogg')) {
+            fileExtension = '.ogg';
+        }
         
         // Only process if it's not too small
         if (audioBlob.size > 1000) {
-            window.processRecording(audioBlob, currentRecordingId);
+            window.processRecording(audioBlob, currentRecordingId, fileExtension);
         } else {
             console.log(`Nagranie #${currentRecordingId} zbyt krótkie, pomijam`);
         }
@@ -336,7 +378,7 @@ window.stopCurrentRecording = function() {
 };
 
 // Funkcja do przetwarzania nagrania
-window.processRecording = async function(audioBlob, recordingId) {
+window.processRecording = async function(audioBlob, recordingId, fileExtension = '.webm') {
     const webhookUrl = localStorage.getItem('webhookUrl');
     
     if (!webhookUrl) {
@@ -354,8 +396,10 @@ window.processRecording = async function(audioBlob, recordingId) {
         
         // Create form data for the API request
         const formData = new FormData();
-        formData.append('audio', audioBlob, `recording-${recordingId}.mp3`);
+        formData.append('audio', audioBlob, `recording-${recordingId}${fileExtension}`);
         formData.append('webhook_url', webhookUrl);
+        
+        console.log(`Wysyłanie nagrania ${recordingId} jako ${fileExtension}, typ MIME: ${audioBlob.type}`);
         
         // Send the audio to the backend
         const response = await fetch('/api/transcribe', {
@@ -571,28 +615,6 @@ window.updateVisualization = function(volume) {
         const height = Math.max(3, scaledVolume * randomFactor);
         bar.style.height = `${height}px`;
     });
-};
-
-// Funkcja do znalezienia obsługiwanego typu MIME
-window.getSupportedMimeType = function() {
-    // Try common audio formats in order of preference
-    const mimeTypes = [
-        'audio/mp3',
-        'audio/mpeg',
-        'audio/webm',
-        'audio/ogg',
-        'audio/wav'
-    ];
-    
-    for (const type of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-            console.log(`Przeglądarka wspiera nagrywanie w formacie ${type}`);
-            return type;
-        }
-    }
-    
-    console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
-    return null;
 };
 
 // Funkcja do odtwarzania odpowiedzi audio
