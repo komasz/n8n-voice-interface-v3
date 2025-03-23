@@ -44,11 +44,12 @@ async def text_to_speech(text: str) -> str:
         # Prepare the request payload
         payload = {
             "model": TTS_MODEL,
-            "voice": "ash",  # Voice stays as 'ash'
+            "voice": "alloy",  # Changed from 'ash' to 'alloy' as it's more widely supported
             "input": text,
-            # Add instructions to speak in Polish and use Polish accent
-            "instructions": "Mów po polsku z polskim akcentem. Speak in Polish language with a natural Polish accent.",
+            # Removed Polish-specific instructions to avoid potential issues
         }
+        
+        logger.info(f"Making TTS request with model {TTS_MODEL}")
         
         # Make the API request
         async with aiohttp.ClientSession() as session:
