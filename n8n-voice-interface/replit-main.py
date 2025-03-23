@@ -7,9 +7,9 @@ import sys
 # Add the current directory to the path so we can import from backend
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Set default STT model to a known working version if not already set
+# Set default STT model to gpt-4o-transcribe if not already set
 if "STT_MODEL" not in os.environ:
-    os.environ["STT_MODEL"] = "whisper-1"
+    os.environ["STT_MODEL"] = "gpt-4o-transcribe"
 
 # Import and run the app
 from backend.app import app
