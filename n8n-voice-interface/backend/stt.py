@@ -3,6 +3,8 @@ import logging
 import uuid
 import tempfile
 import requests
+import subprocess
+import magic  # Dodaj tę bibliotekę: pip install python-magic
 from fastapi import UploadFile, HTTPException
 
 # Configure logging
@@ -35,14 +37,63 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
     try:
         # Save the uploaded file to a temporary location
         temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{audio_file.filename}")
+        original_temp_file = os.path.join(temp_dir, f"original_{uuid.uuid4()}_{audio_file.filename}")
+        final_temp_file = os.path.join(temp_dir, f"converted_{uuid.uuid4()}.mp3")
 
-        with open(temp_file_path, "wb") as temp_file:
+        with open(original_temp_file, "wb") as temp_file:
             # Read the file in chunks
             content = await audio_file.read()
             temp_file.write(content)
 
-        logger.info(f"Saved audio to temporary file: {temp_file_path}")
+        # Sprawdź faktyczny format pliku
+        try:
+            mime = magic.Magic(mime=True)
+            file_type = mime.from_file(original_temp_file)
+            logger.info(f"Detected file type: {file_type}")
+        except Exception as e:
+            logger.warning(f"Could not detect file type: {str(e)}")
+            file_type = "unknown"
+
+        # Przekonwertuj audio do formatu MP3 za pomocą ffmpeg
+        try:
+            logger.info(f"Converting audio file to MP3 format...")
+            # Sprawdź czy ffmpeg jest zainstalowany
+            if subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode != 0:
+                logger.error("ffmpeg is not installed. Please install it to enable audio conversion.")
+                # Jeśli ffmpeg nie jest zainstalowany, używamy oryginalnego pliku
+                final_temp_file = original_temp_file
+            else:
+                # Konwersja do MP3
+                result = subprocess.run([
+                    'ffmpeg', '-y', '-i', original_temp_file, 
+                    '-ar', '44100',  # Ustaw częstotliwość próbkowania na 44.1kHz
+                    '-ac', '1',      # Ustaw 1 kanał (mono)
+                    '-b:a', '128k',  # Bitrate 128kbps
+                    final_temp_file
+                ], capture_output=True)
+                
+                if result.returncode != 0:
+                    logger.error(f"Error converting audio: {result.stderr.decode()}")
+                    # W przypadku błędu, użyj oryginalnego pliku
+                    final_temp_file = original_temp_file
+                else:
+                    logger.info("Audio successfully converted to MP3")
+        except Exception as e:
+            logger.error(f"Error during conversion: {str(e)}")
+            # W przypadku błędu, użyj oryginalnego pliku
+            final_temp_file = original_temp_file
+
+        logger.info(f"Saved audio to temporary file: {final_temp_file}")
+
+        # Check file size
+        file_size = os.path.getsize(final_temp_file)
+        logger.info(f"File size: {file_size} bytes")
+        
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="Audio file is empty")
+        
+        if file_size > 25 * 1024 * 1024:  # 25MB limit
+            raise HTTPException(status_code=400, detail="Audio file exceeds 25MB limit")
 
         # Set up the request headers
         headers = {
@@ -50,28 +101,35 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
         }
 
         # Prepare the file and form data
-        with open(temp_file_path, "rb") as file:
+        with open(final_temp_file, "rb") as file:
             # Set explicit MIME type to audio/mpeg as a safe default
             files = {
-                "file": (os.path.basename(temp_file_path), file, "audio/mpeg"),
+                "file": (os.path.basename(final_temp_file), file, "audio/mpeg"),
                 "model": (None, STT_MODEL),
                 "language": (None, "pl")  # Force Polish language recognition
             }
             
             # Make the API request
             logger.info(f"Sending request to OpenAI API using model: {STT_MODEL} with language: pl")
+            logger.info(f"File name being sent: {os.path.basename(final_temp_file)}")
+            
             response = requests.post(
                 API_URL,
                 headers=headers,
                 files=files
             )
 
-        # Clean up temporary file
+        # Clean up temporary files
         try:
-            os.remove(temp_file_path)
-            logger.info(f"Removed temporary file: {temp_file_path}")
+            if os.path.exists(original_temp_file):
+                os.remove(original_temp_file)
+                logger.info(f"Removed original temporary file: {original_temp_file}")
+            
+            if os.path.exists(final_temp_file) and final_temp_file != original_temp_file:
+                os.remove(final_temp_file)
+                logger.info(f"Removed converted temporary file: {final_temp_file}")
         except Exception as e:
-            logger.warning(f"Failed to remove temporary file: {str(e)}")
+            logger.warning(f"Failed to remove temporary files: {str(e)}")
 
         # Check for errors
         if response.status_code != 200:
