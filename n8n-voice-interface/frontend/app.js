@@ -38,31 +38,45 @@ const MAX_CONVERSATION_ENTRIES = 10; // Maksymalna liczba wpisów konwersacji do
 
 // ====== GLOBALNE FUNKCJE ======
 
-// Funkcja do znalezienia obsługiwanego typu MIME
+// Funkcja do znalezienia obsługiwanego typu MIME, zoptymalizowana dla API OpenAI
 window.getSupportedMimeType = function() {
-    // Lista typów MIME obsługiwanych przez OpenAI API
-    const openaiSupportedMimeTypes = [
-        'audio/mp3',
+    // Formaty w kolejności preferencji dla API OpenAI
+    const preferredMimeTypes = [
+        'audio/wav',       // Format WAV jest bardzo dobrze obsługiwany przez API OpenAI
+        'audio/wave',
+        'audio/x-wav',
+        'audio/mp3',       // MP3 również jest dobrze obsługiwany
         'audio/mpeg',
-        'audio/wav',
-        'audio/webm',
-        'audio/mp4',
+        'audio/webm',      // WebM może działać, ale nie jest najlepszym wyborem
+        'audio/ogg',       // OGG może być problematyczny
         'audio/m4a',
-        'audio/ogg'
+        'audio/mp4'
     ];
     
-    // Sprawdź, które formaty są obsługiwane zarówno przez przeglądarkę, jak i OpenAI
-    for (const type of openaiSupportedMimeTypes) {
+    // Sprawdź, które formaty są obsługiwane przez przeglądarkę
+    for (const type of preferredMimeTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
-            console.log(`Przeglądarka wspiera nagrywanie w formacie ${type} (obsługiwane przez OpenAI)`);
+            console.log(`Wybrano format nagrywania: ${type} (preferowany przez OpenAI)`);
             return type;
         }
     }
     
-    // Jeśli żaden z preferowanych typów nie jest obsługiwany, użyj domyślnego
-    console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
+    // Jeśli żaden z preferowanych typów nie jest obsługiwany, spróbuj inne z określonymi kodekami
+    const fallbackMimeTypes = [
+        'audio/webm;codecs=pcm',
+        'audio/webm;codecs=opus', 
+        'audio/ogg;codecs=opus'
+    ];
+    
+    for (const type of fallbackMimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+            console.log(`Wybrano format nagrywania: ${type} (zapasowy)`);
+            return type;
+        }
+    }
     
     // W ostateczności pozwól przeglądarce wybrać domyślny format
+    console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
     return '';
 };
 
@@ -73,7 +87,7 @@ window.startListening = async function() {
         microphoneStream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
                 channelCount: 1,
-                sampleRate: 16000
+                sampleRate: 44100
             } 
         });
         
@@ -93,10 +107,8 @@ window.startListening = async function() {
         isListening = true;
         isRecording = false;
         
-        // Setup the media recorder
-        const mimeType = window.getSupportedMimeType();
-        const options = mimeType ? { mimeType } : {};
-        mediaRecorder = new MediaRecorder(microphoneStream, options);
+        // Ważne: Nie tworzymy mediaRecorder od razu - zrobimy to przy rozpoczęciu nagrywania
+        mediaRecorder = null;
         
         // Start silence detection loop
         window.startSilenceDetection();
@@ -138,6 +150,7 @@ window.stopListening = function() {
     // Reset flags
     isListening = false;
     isRecording = false;
+    mediaRecorder = null;
     
     console.log("Continuous listening mode deactivated");
 };
@@ -324,8 +337,22 @@ window.startNewRecording = function() {
     recordingId++;
     const currentRecordingId = recordingId;
     
-    // Ustal format MIME dla nagrywania
+    // Ustal format MIME dla nagrywania - próbuj najlepszych formatów dla OpenAI API
     const mimeType = window.getSupportedMimeType();
+    const options = mimeType ? { mimeType } : {};
+    
+    // Jeśli nie mamy jeszcze MediaRecorder, utwórz go
+    if (!mediaRecorder) {
+        try {
+            mediaRecorder = new MediaRecorder(microphoneStream, options);
+            console.log(`Utworzono nowy MediaRecorder z formatem: ${mimeType || "domyślnym"}`);
+        } catch (e) {
+            console.error(`Błąd przy tworzeniu MediaRecorder: ${e.message}`);
+            // Spróbuj utworzyć bez określania typu MIME
+            mediaRecorder = new MediaRecorder(microphoneStream);
+            console.log("Utworzono MediaRecorder z domyślnymi opcjami");
+        }
+    }
     
     // Setup mediaRecorder event handlers
     mediaRecorder.onstart = () => {
@@ -352,10 +379,12 @@ window.startNewRecording = function() {
         let fileExtension = '.webm'; // domyślne
         if (actualMimeType.includes('mp3') || actualMimeType.includes('mpeg')) {
             fileExtension = '.mp3';
-        } else if (actualMimeType.includes('wav')) {
+        } else if (actualMimeType.includes('wav') || actualMimeType.includes('wave')) {
             fileExtension = '.wav';
         } else if (actualMimeType.includes('ogg')) {
             fileExtension = '.ogg';
+        } else if (actualMimeType.includes('m4a') || actualMimeType.includes('mp4')) {
+            fileExtension = '.m4a';
         }
         
         // Only process if it's not too small
