@@ -57,17 +57,35 @@
                 <div id="message-text"></div>
             </div>
 
+            <!-- Settings container with tabs -->
             <div class="settings-container">
-                <h3>Ustawienia</h3>
-                <div class="form-group">
-                    <label for="webhook-url">URL Webhooka N8N:</label>
-                    <input type="text" id="webhook-url" placeholder="https://twoja-instancja-n8n.com/webhook/sciezka">
+                <div class="tabs">
+                    <button class="tab-button active" data-tab="webhook-settings">Webhook</button>
+                    <button class="tab-button" data-tab="greeting-settings">Powitanie</button>
                 </div>
-                <div class="form-group">
-                    <label for="greeting-text">Tekst powitania:</label>
-                    <input type="text" id="greeting-text" placeholder="Cześć jestem super agent!">
+                
+                <div id="webhook-settings" class="tab-content active">
+                    <h3>Ustawienia Webhooka</h3>
+                    <div class="form-group">
+                        <label for="webhook-url">URL Webhooka N8N:</label>
+                        <input type="text" id="webhook-url" placeholder="https://twoja-instancja-n8n.com/webhook/sciezka">
+                        <button id="save-settings" class="btn">Zapisz</button>
+                    </div>
                 </div>
-                <button id="save-settings" class="btn">Zapisz</button>
+                
+                <div id="greeting-settings" class="tab-content">
+                    <h3>Ustawienia Powitania Głosowego</h3>
+                    <div class="form-group">
+                        <label for="greeting-text">Tekst Powitania:</label>
+                        <textarea id="greeting-text" placeholder="Witaj! Możesz teraz mówić. W czym mogę pomóc?" rows="3"></textarea>
+                        <div class="button-group">
+                            <button id="save-greeting" class="btn">Zapisz</button>
+                            <button id="test-greeting" class="btn-secondary">
+                                <i class="fas fa-play"></i> Testuj powitanie
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="info-container">
@@ -76,7 +94,8 @@
                     <ol>
                         <li>Wprowadź URL webhooka n8n w ustawieniach</li>
                         <li>Kliknij przycisk mikrofonu, aby włączyć ciągłe słuchanie</li>
-                        <li>Zacznij mówić - nagrywanie zatrzyma się automatycznie po wykryciu ciszy</li>
+                        <li>Usłyszysz powitanie głosowe, po którym możesz zacząć mówić</li>
+                        <li>Nagrywanie zatrzyma się automatycznie po wykryciu ciszy</li>
                         <li>Twoja wypowiedź zostanie przetworzona i wysłana do n8n</li>
                         <li>Możesz od razu zacząć mówić ponownie, bez czekania na odpowiedź</li>
                         <li>Kliknij ponownie przycisk mikrofonu, aby wyłączyć ciągłe słuchanie</li>
@@ -92,5 +111,25 @@
 
     <script src="app.js"></script>
     <script src="greeting.js"></script>
+    <script>
+        // Tab functionality
+        document.addEventListener('DOMContentLoaded', () => {
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const tabContents = document.querySelectorAll('.tab-content');
+            
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    // Deactivate all tabs
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.classList.remove('active'));
+                    
+                    // Activate clicked tab
+                    button.classList.add('active');
+                    const tabId = button.getAttribute('data-tab');
+                    document.getElementById(tabId).classList.add('active');
+                });
+            });
+        });
+    </script>
 </body>
 </html>
