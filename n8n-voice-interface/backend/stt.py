@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 # Constants
 STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-transcribe")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
 async def transcribe_audio(audio_file: UploadFile) -> dict:
     """
@@ -59,7 +60,7 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
             # Make the API request
             logger.info(f"Sending request to OpenAI API using model: {STT_MODEL}")
             response = requests.post(
-                "https://api.openai.com/v1/audio/transcriptions",
+                API_URL, #Corrected API URL
                 headers=headers,
                 files=files
             )
