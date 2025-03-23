@@ -14,3 +14,7 @@ args = "cd n8n-voice-interface && python3 replit-main.py"
 
 [nix]
 channel = "stable-24_05"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
