@@ -3,7 +3,7 @@ import logging
 import uuid
 import tempfile
 import requests
-import subprocess
+import io
 from fastapi import UploadFile, HTTPException
 
 # Configure logging
@@ -11,44 +11,92 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-transcribe")
+STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
-# Helper to check file details (without python-magic)
+# Try to import pydub - will be used for audio conversion if available
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+    logger.info("Pydub is available for audio conversion")
+except ImportError:
+    PYDUB_AVAILABLE = False
+    logger.warning("Pydub is not available, audio conversion will be limited")
+
+# Get file info for debugging
 def get_file_info(file_path):
-    """Get basic file information without python-magic."""
+    """
+    Get basic file information for debugging.
+    """
+    info = {
+        "filename": os.path.basename(file_path),
+        "size": os.path.getsize(file_path),
+    }
+    
+    # Try to detect file type from extension
+    file_extension = os.path.splitext(file_path)[1].lower()
+    if file_extension in ['.mp3', '.mpeg', '.mpga']:
+        info["likely_type"] = "audio/mpeg"
+    elif file_extension in ['.wav', '.wave']:
+        info["likely_type"] = "audio/wav"
+    elif file_extension in ['.webm']:
+        info["likely_type"] = "audio/webm"
+    elif file_extension in ['.ogg', '.oga']:
+        info["likely_type"] = "audio/ogg"
+    else:
+        info["likely_type"] = "unknown"
+    
+    return info
+
+# Simple function to normalize audio format using pydub
+def normalize_audio_format(input_file, output_file=None, target_format="mp3"):
+    """
+    Convert audio to a standard format using pydub.
+    
+    Args:
+        input_file: Path to input audio file
+        output_file: Path for output file, if None, generates one
+        target_format: Target format (mp3, wav)
+        
+    Returns:
+        Path to the output file
+    """
+    if not PYDUB_AVAILABLE:
+        logger.warning("Pydub not available, skipping normalization")
+        return input_file
+        
+    if output_file is None:
+        temp_dir = tempfile.gettempdir()
+        output_file = os.path.join(temp_dir, f"{uuid.uuid4()}.{target_format}")
+    
     try:
-        # Sprawdź początkowe bajty pliku
-        with open(file_path, 'rb') as f:
-            header = f.read(16)  # Czytamy pierwsze 16 bajtów
+        # Try to guess the format from the file extension
+        input_ext = os.path.splitext(input_file)[1][1:].lower()
+        if not input_ext or input_ext == "":
+            input_ext = "mp3"  # Default guess
         
-        # Próbujemy zidentyfikować typ na podstawie nagłówka
-        file_type = "unknown"
-        if header.startswith(b'RIFF'):
-            file_type = "audio/wav"
-        elif header.startswith(b'\xFF\xFB') or header.startswith(b'ID3'):
-            file_type = "audio/mpeg"
-        elif header.startswith(b'OggS'):
-            file_type = "audio/ogg"
-        elif header.startswith(b'1A45DFA3'):
-            file_type = "audio/webm"
+        logger.info(f"Trying to load audio file as {input_ext} format")
+        
+        # Load the audio file
+        audio = AudioSegment.from_file(input_file, format=input_ext)
+        
+        # Export to target format - use high quality MP3
+        if target_format == "mp3":
+            audio.export(
+                output_file, 
+                format="mp3",
+                bitrate="128k",
+                parameters=["-ac", "1"]  # Force mono channel
+            )
+        else:
+            audio.export(output_file, format=target_format)
             
-        # Pobierz rozmiar pliku
-        file_size = os.path.getsize(file_path)
-        
-        return {
-            "filename": os.path.basename(file_path),
-            "size": file_size,
-            "guessed_type": file_type
-        }
+        logger.info(f"Audio converted from {input_ext} to {target_format}")
+        return output_file
     except Exception as e:
-        logger.error(f"Error getting file info: {str(e)}")
-        return {
-            "filename": os.path.basename(file_path),
-            "size": os.path.getsize(file_path),
-            "guessed_type": "unknown"
-        }
+        logger.error(f"Error converting audio: {str(e)}")
+        return input_file
 
 async def transcribe_audio(audio_file: UploadFile) -> dict:
     """
@@ -69,49 +117,68 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
     logger.info("OpenAI API key found in environment")
 
     try:
-        # Get file details from request
+        # Get information about the uploaded file
+        content_type = audio_file.content_type
         filename = audio_file.filename
-        content_type = audio_file.content_type or "unknown"
+        file_extension = os.path.splitext(filename)[1].lower()
+        
         logger.info(f"File from request: {filename}, content-type: {content_type}")
-
+        
         # Save the uploaded file to a temporary location
         temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{filename}")
+        original_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{filename}")
 
-        with open(temp_file_path, "wb") as temp_file:
+        with open(original_file_path, "wb") as temp_file:
             # Read the file in chunks
             content = await audio_file.read()
             temp_file.write(content)
 
-        logger.info(f"Saved audio to temporary file: {temp_file_path}")
-        
-        # Get file info
-        file_info = get_file_info(temp_file_path)
+        logger.info(f"Saved audio to temporary file: {original_file_path}")
+        file_info = get_file_info(original_file_path)
         logger.info(f"File info: {file_info}")
-
-        # Check if the file is valid
-        if file_info["size"] == 0:
-            raise HTTPException(status_code=400, detail="Audio file is empty")
         
-        if file_info["size"] > 25 * 1024 * 1024:  # 25MB limit
-            raise HTTPException(status_code=400, detail="Audio file exceeds 25MB limit")
-
-        # Determine MIME type to use
-        mime_type = content_type
-        if content_type == "unknown" or not content_type:
-            # Use extension to guess MIME type
-            extension = os.path.splitext(filename)[1].lower()
-            if extension == '.wav':
-                mime_type = "audio/wav"
-            elif extension in ['.mp3', '.mpeg', '.mpga']:
+        # Try to normalize audio format if possible
+        if PYDUB_AVAILABLE:
+            mp3_output_path = os.path.join(temp_dir, f"{uuid.uuid4()}.mp3")
+            processed_file_path = normalize_audio_format(
+                original_file_path, 
+                mp3_output_path, 
+                "mp3"
+            )
+            
+            if processed_file_path == mp3_output_path:
+                file_info = get_file_info(processed_file_path)
+                logger.info(f"Using normalized MP3 file: {processed_file_path}")
+                logger.info(f"Normalized file info: {file_info}")
                 mime_type = "audio/mpeg"
-            elif extension == '.webm':
+            else:
+                logger.warning("Audio normalization failed, using original file")
+                processed_file_path = original_file_path
+                # Try to determine appropriate MIME type
+                if file_extension in ['.mp3', '.mpeg', '.mpga']:
+                    mime_type = "audio/mpeg"
+                elif file_extension in ['.wav', '.wave']:
+                    mime_type = "audio/wav"
+                elif file_extension in ['.webm']:
+                    mime_type = "audio/webm"
+                elif file_extension in ['.ogg', '.oga']:
+                    mime_type = "audio/ogg"
+                else:
+                    mime_type = content_type or "audio/mpeg"
+        else:
+            # Without pydub, just use the original file
+            processed_file_path = original_file_path
+            # Try to determine appropriate MIME type
+            if file_extension in ['.mp3', '.mpeg', '.mpga']:
+                mime_type = "audio/mpeg"
+            elif file_extension in ['.wav', '.wave']:
+                mime_type = "audio/wav"
+            elif file_extension in ['.webm']:
                 mime_type = "audio/webm"
-            elif extension == '.ogg':
+            elif file_extension in ['.ogg', '.oga']:
                 mime_type = "audio/ogg"
             else:
-                # Fallback to a common type
-                mime_type = "audio/mpeg"
+                mime_type = content_type or "audio/mpeg"
         
         logger.info(f"Using MIME type: {mime_type}")
 
@@ -121,31 +188,35 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
         }
 
         # Prepare the file and form data
-        with open(temp_file_path, "rb") as file:
-            # Use the determined MIME type
+        with open(processed_file_path, "rb") as file:
+            # Log the file name and mime type for debugging
+            logger.info(f"File name being sent: {os.path.basename(processed_file_path)} with MIME type: {mime_type}")
+            
             files = {
-                "file": (filename, file, mime_type),
+                "file": (os.path.basename(processed_file_path), file, mime_type),
                 "model": (None, STT_MODEL),
                 "language": (None, "pl")  # Force Polish language recognition
             }
             
             # Make the API request
             logger.info(f"Sending request to OpenAI API using model: {STT_MODEL} with language: pl")
-            logger.info(f"File name being sent: {filename} with MIME type: {mime_type}")
-            
             response = requests.post(
                 API_URL,
                 headers=headers,
                 files=files
             )
 
-        # Clean up temporary file
+        # Clean up temporary files
         try:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-                logger.info(f"Removed temporary file: {temp_file_path}")
+            if os.path.exists(original_file_path):
+                os.remove(original_file_path)
+                logger.info(f"Removed temporary file: {original_file_path}")
+            
+            if processed_file_path != original_file_path and os.path.exists(processed_file_path):
+                os.remove(processed_file_path)
+                logger.info(f"Removed normalized file: {processed_file_path}")
         except Exception as e:
-            logger.warning(f"Failed to remove temporary file: {str(e)}")
+            logger.warning(f"Failed to remove temporary files: {str(e)}")
 
         # Check for errors
         if response.status_code != 200:
@@ -157,10 +228,6 @@ async def transcribe_audio(audio_file: UploadFile) -> dict:
                 error_data = response.json()
                 if "error" in error_data and "message" in error_data["error"]:
                     error_msg = error_data["error"]["message"]
-                    
-                # Provide more helpful message for common errors
-                if "unsupported" in error_msg.lower():
-                    error_msg += ". Please try recording with a different browser or using WAV format."
             except:
                 pass
 
