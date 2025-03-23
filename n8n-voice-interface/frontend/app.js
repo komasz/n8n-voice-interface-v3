@@ -1,307 +1,4 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // Konfiguracja parametrów VAD (Voice Activity Detection)
-    const vadConfig = {
-        // Długość bufora do analizy (w sekundach)
-        bufferLength: 3,
-        // Minimalny czas mowy przed rozpoczęciem aktywnego nasłuchiwania (ms)
-        minSpeechTime: 300,
-        // Czas adaptacyjnej ciszy do zakończenia nagrywania (ms)
-        silenceTimeoutBase: 1000,
-        // Dodatkowy czas dla dłuższych wypowiedzi (ms)
-        silenceTimeoutExtended: 1500,
-        // Próg detekcji ciszy (dB, wartość ujemna)
-        silenceThresholdBase: -45,
-        // Minimalny próg energii (dB)
-        noiseFloor: -70,
-        // Współczynnik adaptacji progu ciszy
-        adaptiveThresholdFactor: 0.8,
-        // Liczba ramek do uśrednienia dla adaptacji
-        adaptationFrames: 30,
-        // Czułość detekcji mowy
-        speechSensitivity: 1.2
-    };
-    
-    // Zaawansowany detektor aktywności głosowej
-    class AdvancedVoiceActivityDetector {
-        constructor(audioContext, mediaStreamSource, config = vadConfig) {
-            this.audioContext = audioContext;
-            this.mediaStreamSource = mediaStreamSource;
-            this.config = config;
-            
-            // Stan detektora
-            this.isSpeaking = false;
-            this.silenceStart = null;
-            this.speechStart = null;
-            this.silenceTimeout = this.config.silenceTimeoutBase;
-            this.currentThreshold = this.config.silenceThresholdBase;
-            
-            // Bufor energii dla adaptacji
-            this.energyHistory = [];
-            this.speechDuration = 0;
-            
-            // Flagi stanu
-            this.isInitialized = false;
-            this.isCallibrating = true;
-            this.callibrationFrames = 0;
-            this.callibrationEnergy = [];
-            
-            // Znaczniki czasowe do wykrywania długości wypowiedzi
-            this.speechStartTime = null;
-            
-            // Konfiguracja analizatora dźwięku
-            this.setupAnalyser();
-        }
-        
-        setupAnalyser() {
-            // Konfiguracja analizatora dla spektrum częstotliwości i czasowej
-            this.analyser = this.audioContext.createAnalyser();
-            this.analyser.fftSize = 2048; // Większy rozmiar FFT dla lepszej rozdzielczości
-            this.analyser.smoothingTimeConstant = 0.5;
-            this.analyser.minDecibels = -90;
-            this.analyser.maxDecibels = -10;
-            
-            // Połączenie źródła dźwięku z analizatorem
-            this.mediaStreamSource.connect(this.analyser);
-            
-            // Przygotowanie buforów dla analizy
-            this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
-            this.timeData = new Uint8Array(this.analyser.fftSize);
-            
-            this.isInitialized = true;
-        }
-        
-        // Kalibracja poziomu szumu otoczenia
-        async calibrate() {
-            if (!this.isInitialized) return;
-            
-            this.isCallibrating = true;
-            this.callibrationFrames = 0;
-            this.callibrationEnergy = [];
-            
-            // Zbieranie danych przez 2 sekundy do kalibracji
-            return new Promise(resolve => {
-                const calibrateInterval = setInterval(() => {
-                    this.analyser.getByteFrequencyData(this.freqData);
-                    const energy = this.calculateEnergy(this.freqData);
-                    this.callibrationEnergy.push(energy);
-                    this.callibrationFrames++;
-                    
-                    // Po 2 sekundach kończymy kalibrację
-                    if (this.callibrationFrames >= 100) { // ~2s przy 50Hz
-                        clearInterval(calibrateInterval);
-                        
-                        // Sortujemy energię i bierzemy 10% najniższych wartości jako bazową energię szumu
-                        const sortedEnergy = [...this.callibrationEnergy].sort((a, b) => a - b);
-                        const noiseFloorIndex = Math.floor(sortedEnergy.length * 0.1);
-                        const noiseFloorEstimate = sortedEnergy[noiseFloorIndex];
-                        
-                        // Ustawiamy adaptacyjny próg powyżej szumu
-                        const adaptiveThreshold = Math.max(
-                            noiseFloorEstimate + 10, 
-                            this.config.silenceThresholdBase
-                        );
-                        
-                        this.currentThreshold = adaptiveThreshold;
-                        console.log(`Kalibracja zakończona. Poziom szumu: ${noiseFloorEstimate}, Próg: ${this.currentThreshold}`);
-                        
-                        this.isCallibrating = false;
-                        resolve();
-                    }
-                }, 20); // ~50Hz częstotliwość próbkowania
-            });
-        }
-        
-        // Analiza aktywności głosowej
-        analyze() {
-            if (!this.isInitialized || this.isCallibrating) return { isSpeaking: false, shouldStopRecording: false };
-            
-            // Zbieranie danych spektrum i czasowych
-            this.analyser.getByteFrequencyData(this.freqData);
-            this.analyser.getByteTimeDomainData(this.timeData);
-            
-            // Obliczanie energii dźwięku
-            const energy = this.calculateEnergy(this.freqData);
-            
-            // Wykrywanie przejść tonowych (pitch detection) - uproszczona wersja
-            const zeroCrossings = this.calculateZeroCrossings(this.timeData);
-            
-            // Dodawanie do historii energii
-            this.updateEnergyHistory(energy);
-            
-            // Adaptacja progu ciszy na podstawie historii
-            this.adaptThreshold();
-            
-            // Wykrywanie mowy na podstawie energii i przejść tonowych
-            const speechDetected = this.detectSpeech(energy, zeroCrossings);
-            
-            // Aktualizacja stanu detekcji
-            return this.updateDetectionState(speechDetected);
-        }
-        
-        // Obliczanie energii dźwięku
-        calculateEnergy(freqData) {
-            // Koncentracja na zakresie częstotliwości ludzkiej mowy (300Hz-3000Hz)
-            // W przypadku FFT size 2048 i częstotliwości próbkowania 44.1kHz
-            // Indeksy odpowiadające ~300Hz to ~14, a ~3000Hz to ~140
-            const speechBandStart = 14; 
-            const speechBandEnd = 140;
-            
-            let sum = 0;
-            for (let i = speechBandStart; i < speechBandEnd; i++) {
-                // Używamy kwadratu aby podkreślić wyższe amplitudy
-                sum += freqData[i] * freqData[i];
-            }
-            
-            // Normalizacja
-            return sum / (speechBandEnd - speechBandStart);
-        }
-        
-        // Obliczanie przejść zerowych (zero-crossings) jako prosta miara wysokości tonu
-        calculateZeroCrossings(timeData) {
-            let zeroCrossings = 0;
-            for (let i = 1; i < timeData.length; i++) {
-                if ((timeData[i] > 128 && timeData[i - 1] <= 128) || 
-                    (timeData[i] <= 128 && timeData[i - 1] > 128)) {
-                    zeroCrossings++;
-                }
-            }
-            return zeroCrossings;
-        }
-        
-        // Aktualizacja historii energii
-        updateEnergyHistory(energy) {
-            this.energyHistory.push(energy);
-            if (this.energyHistory.length > this.config.adaptationFrames) {
-                this.energyHistory.shift();
-            }
-        }
-        
-        // Adaptacyjny próg ciszy
-        adaptThreshold() {
-            if (this.energyHistory.length < 10) return;
-            
-            // Sortujemy historię energii i bierzemy niskie percentyle
-            const sortedEnergy = [...this.energyHistory].sort((a, b) => a - b);
-            const lowerQuartileIndex = Math.floor(sortedEnergy.length * 0.25);
-            const lowerQuartileEnergy = sortedEnergy[lowerQuartileIndex];
-            
-            // Dostosuj próg, ale nie pozwól, by spadł poniżej bazowego progu
-            const adaptiveThreshold = Math.max(
-                lowerQuartileEnergy * this.config.adaptiveThresholdFactor,
-                this.config.silenceThresholdBase
-            );
-            
-            // Wygładzanie zmian progu
-            this.currentThreshold = this.currentThreshold * 0.95 + adaptiveThreshold * 0.05;
-        }
-        
-        // Detekcja mowy
-        detectSpeech(energy, zeroCrossings) {
-            // Używamy zarówno energii jak i przejść zerowych do detekcji mowy
-            // Więcej przejść zerowych sugeruje mowę lub wysokie tony
-            const normalizedZeroCrossings = zeroCrossings / this.analyser.fftSize;
-            const speechProbability = energy > this.currentThreshold * this.config.speechSensitivity || 
-                                    (energy > this.currentThreshold * 0.7 && normalizedZeroCrossings > 0.1);
-            
-            return speechProbability;
-        }
-        
-        // Aktualizacja stanu detekcji
-        updateDetectionState(speechDetected) {
-            const now = Date.now();
-            
-            if (speechDetected) {
-                // Mowa wykryta
-                if (!this.isSpeaking) {
-                    // Przejście z ciszy do mowy
-                    this.speechStart = now;
-                    this.speechStartTime = now;
-                } else if (this.speechStartTime && now - this.speechStartTime > 5000) {
-                    // Dla dłuższych wypowiedzi zwiększamy czas oczekiwania na ciszę
-                    this.silenceTimeout = this.config.silenceTimeoutExtended;
-                }
-                
-                // Resetowanie początku ciszy
-                this.silenceStart = null;
-                this.isSpeaking = true;
-                
-                return { isSpeaking: true, shouldStopRecording: false };
-            } else {
-                // Cisza wykryta
-                if (this.isSpeaking) {
-                    // Przejście z mowy do ciszy
-                    if (!this.silenceStart) {
-                        this.silenceStart = now;
-                    }
-                    
-                    const silenceDuration = now - this.silenceStart;
-                    
-                    // Sprawdzamy czy cisza trwa wystarczająco długo aby zakończyć nagrywanie
-                    // Ale tylko jeśli była wcześniej jakaś mowa
-                    if (silenceDuration > this.silenceTimeout && 
-                        this.speechStart && now - this.speechStart > this.config.minSpeechTime) {
-                        // Wystarczająco długa cisza po wystarczająco długiej mowie
-                        this.isSpeaking = false;
-                        this.speechStart = null;
-                        this.silenceStart = null;
-                        this.silenceTimeout = this.config.silenceTimeoutBase; // Reset timeoutu
-                        
-                        return { isSpeaking: false, shouldStopRecording: true };
-                    }
-                    
-                    // Nadal w stanie mowy, ale z ciszą
-                    return { isSpeaking: true, shouldStopRecording: false };
-                } else {
-                    // Nadal cisza
-                    this.speechStart = null;
-                    this.silenceStart = null;
-                    return { isSpeaking: false, shouldStopRecording: false };
-                }
-            }
-        }
-        
-        // Aktualizacja wizualizacji dźwięku
-        updateVisualization(visualizationContainer) {
-            if (!this.isInitialized) return;
-            
-            const bars = visualizationContainer.querySelectorAll('.visualization-bar');
-            if (!bars.length) return;
-            
-            // Używamy spektrum częstotliwości do wizualizacji
-            this.analyser.getByteFrequencyData(this.freqData);
-            
-            // Dzielimy spektrum na sekcje odpowiadające paskom wizualizacji
-            const barCount = bars.length;
-            const freqStep = Math.floor(this.freqData.length / barCount);
-            
-            for (let i = 0; i < barCount; i++) {
-                // Obliczamy energię dla danego pasma częstotliwości
-                let sum = 0;
-                const start = i * freqStep;
-                const end = start + freqStep;
-                
-                for (let j = start; j < end; j++) {
-                    sum += this.freqData[j];
-                }
-                
-                const averageVolume = sum / freqStep;
-                
-                // Skalujemy wysokość paska (max 50px)
-                const height = Math.max(5, Math.min(50, averageVolume / 2));
-                bars[i].style.height = `${height}px`;
-            }
-        }
-        
-        // Czyszczenie zasobów
-        dispose() {
-            if (this.mediaStreamSource) {
-                this.mediaStreamSource.disconnect();
-            }
-            this.isInitialized = false;
-        }
-    }
-
-    // Zmienne i elementy interfejsu
     const recordButton = document.getElementById('record-button');
     const statusMessage = document.getElementById('status-message');
     const visualizationContainer = document.getElementById('visualization-container');
@@ -313,7 +10,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettingsButton = document.getElementById('save-settings');
     const responseContainer = document.getElementById('response-container');
     const responseText = document.getElementById('response-text');
-    const autoStopCheckbox = document.getElementById('auto-stop-checkbox');
     
     // Audio player for responses
     let audioPlayer = new Audio();
@@ -324,31 +20,33 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Load saved webhook URL from localStorage
     webhookUrlInput.value = localStorage.getItem('webhookUrl') || '';
-    
-    // Load auto-stop preference from localStorage
-    const savedAutoStop = localStorage.getItem('autoStopEnabled');
-    autoStopCheckbox.checked = savedAutoStop === null ? true : savedAutoStop === 'true';
 
-    // Save webhook URL and settings to localStorage
+    // Save webhook URL to localStorage
     saveSettingsButton.addEventListener('click', () => {
         const webhookUrl = webhookUrlInput.value.trim();
         if (webhookUrl) {
             localStorage.setItem('webhookUrl', webhookUrl);
-            localStorage.setItem('autoStopEnabled', autoStopCheckbox.checked);
             showMessage('Ustawienia zapisane pomyślnie!', 'success');
         } else {
             showMessage('Proszę wprowadzić poprawny adres URL webhooka', 'error');
         }
     });
 
-    // Variables for recording and detection
     let mediaRecorder;
     let audioChunks = [];
     let isRecording = false;
+    
+    // Variables for voice activity detection
     let audioContext;
+    let analyser;
+    let silenceStart = null;
+    let silenceThreshold = 15;
+    let silenceTimeout = 1500;
     let audioSource;
-    let voiceDetector;
-    let rafId;
+    let volumeDataArray;
+    let speechDetected = false;
+    let speechStartTime = null;
+    let volumeCheckInterval = null;
 
     // Check if browser supports required APIs
     if (!navigator.mediaDevices || !window.MediaRecorder) {
@@ -388,6 +86,16 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             mediaRecorder.addEventListener('stop', () => {
+                // Clean up voice activity detection
+                if (volumeCheckInterval) {
+                    clearInterval(volumeCheckInterval);
+                    volumeCheckInterval = null;
+                }
+                
+                if (audioContext) {
+                    audioContext.close().catch(err => console.error('Error closing audio context:', err));
+                }
+                
                 // Create audio blob with specific type
                 const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/mpeg' });
                 
@@ -402,14 +110,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 stream.getTracks().forEach(track => track.stop());
             });
             
-            // Setup advanced voice activity detection if enabled
-            if (autoStopCheckbox.checked) {
-                await setupAdvancedVoiceActivityDetection(stream);
-            }
-            
             // Start recording
             mediaRecorder.start();
             isRecording = true;
+            
+            // Setup simple voice activity detection
+            setupVoiceActivityDetection(stream);
             
             // Update UI
             recordButton.classList.add('recording');
@@ -424,48 +130,93 @@ document.addEventListener('DOMContentLoaded', () => {
             showMessage(`Nie można uzyskać dostępu do mikrofonu: ${error.message}`, 'error');
         }
     }
-    
-    // Setup advanced voice activity detection
-    async function setupAdvancedVoiceActivityDetection(stream) {
+
+    // Setup simple voice activity detection
+    function setupVoiceActivityDetection(stream) {
         try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             audioSource = audioContext.createMediaStreamSource(stream);
+            analyser = audioContext.createAnalyser();
             
-            // Utworzenie detektora głosu
-            voiceDetector = new AdvancedVoiceActivityDetector(audioContext, audioSource);
+            analyser.fftSize = 256;
+            analyser.minDecibels = -90;
+            analyser.maxDecibels = -10;
+            analyser.smoothingTimeConstant = 0.85;
             
-            // Kalibracja detektora (uczenie się poziomu szumu otoczenia)
-            statusMessage.textContent = 'Kalibracja mikrofonu...';
-            await voiceDetector.calibrate();
-            statusMessage.textContent = 'Słucham...';
+            audioSource.connect(analyser);
             
-            // Uruchomienie detekcji w pętli
-            function detectVoiceActivity() {
-                if (!isRecording) return;
-                
-                // Analiza dźwięku
-                const result = voiceDetector.analyze();
-                
-                // Aktualizacja wizualizacji
-                voiceDetector.updateVisualization(visualizationContainer);
-                
-                // Jeśli wykryto koniec mowy, zatrzymaj nagrywanie
-                if (result.shouldStopRecording) {
-                    console.log("Wykryto koniec wypowiedzi, zatrzymywanie nagrywania");
-                    stopRecording();
+            volumeDataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            // Reset state
+            silenceStart = null;
+            speechDetected = false;
+            speechStartTime = null;
+            
+            // Check volume every 100ms
+            volumeCheckInterval = setInterval(() => {
+                if (!isRecording) {
+                    clearInterval(volumeCheckInterval);
                     return;
                 }
                 
-                // Kontynuuj detekcję
-                rafId = requestAnimationFrame(detectVoiceActivity);
-            }
+                analyser.getByteFrequencyData(volumeDataArray);
+                
+                // Calculate volume level
+                let sum = 0;
+                for (let i = 0; i < volumeDataArray.length; i++) {
+                    sum += volumeDataArray[i];
+                }
+                const averageVolume = sum / volumeDataArray.length;
+                
+                // Update visualization
+                updateVisualization(averageVolume);
+                
+                // If we detect speech for the first time
+                if (averageVolume > silenceThreshold && !speechDetected) {
+                    speechDetected = true;
+                    speechStartTime = Date.now();
+                    console.log("Mowa wykryta, rozpoczęto nasłuchiwanie");
+                }
+                
+                // Only start checking for silence after we've detected speech
+                if (speechDetected) {
+                    // Check for silence
+                    if (averageVolume < silenceThreshold) {
+                        if (!silenceStart) {
+                            silenceStart = Date.now();
+                            console.log("Cisza wykryta, rozpoczęcie odliczania");
+                        } else if (Date.now() - silenceStart > silenceTimeout) {
+                            // Only stop if we've had some meaningful speech (> 500ms)
+                            if (speechStartTime && Date.now() - speechStartTime > 500) {
+                                console.log("Cisza trwała wystarczająco długo, zatrzymanie nagrywania");
+                                clearInterval(volumeCheckInterval);
+                                stopRecording();
+                            }
+                        }
+                    } else {
+                        // Reset silence timer if sound is detected
+                        silenceStart = null;
+                    }
+                }
+            }, 100);
             
-            // Rozpocznij detekcję
-            detectVoiceActivity();
-            
+            console.log("Detekcja aktywności głosowej uruchomiona");
         } catch (error) {
-            console.error('Błąd podczas inicjalizacji detekcji głosu:', error);
+            console.error('Błąd podczas konfiguracji detekcji aktywności głosowej:', error);
         }
+    }
+    
+    // Update visualization based on actual audio levels
+    function updateVisualization(volume) {
+        const bars = document.querySelectorAll('.visualization-bar');
+        const scaledVolume = Math.min(100, volume * 3); // Scale up for better visibility
+        
+        bars.forEach(bar => {
+            // Randomize slightly around the actual volume for visual effect
+            const randomFactor = 0.8 + Math.random() * 0.4;
+            const height = Math.max(5, scaledVolume * randomFactor);
+            bar.style.height = `${height}px`;
+        });
     }
 
     // Find supported MIME type
@@ -497,13 +248,9 @@ document.addEventListener('DOMContentLoaded', () => {
             isRecording = false;
             
             // Clean up voice activity detection
-            if (voiceDetector) {
-                voiceDetector.dispose();
-            }
-            
-            if (rafId) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
+            if (volumeCheckInterval) {
+                clearInterval(volumeCheckInterval);
+                volumeCheckInterval = null;
             }
             
             // Update UI
