@@ -98,16 +98,21 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Start continuous listening mode
     async function startListening() {
-        // Get microphone stream
+        // Get microphone stream z lepszymi parametrami
         microphoneStream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
-                channelCount: 1,
-                sampleRate: 16000
+                channelCount: 1,         // Mono
+                sampleRate: 44100,       // Standardowa częstotliwość próbkowania
+                echoCancellation: true,  // Redukcja echa
+                noiseSuppression: true,  // Redukcja szumów
+                autoGainControl: true    // Automatyczna kontrola wzmocnienia
             } 
         });
         
         // Setup audio context and analyzer
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 44100  // Upewnij się, że częstotliwość próbkowania jest standardowa
+        });
         audioSource = audioContext.createMediaStreamSource(microphoneStream);
         audioAnalyser = audioContext.createAnalyser();
         
@@ -122,9 +127,13 @@ document.addEventListener('DOMContentLoaded', () => {
         isListening = true;
         isRecording = false;
         
-        // Setup the media recorder (but don't start it yet)
+        // Setup the media recorder z lepszymi opcjami
         const mimeType = getSupportedMimeType();
-        const options = mimeType ? { mimeType } : {};
+        const options = mimeType ? { 
+            mimeType: mimeType,
+            audioBitsPerSecond: 128000 // 128kbps dla lepszej jakości
+        } : {};
+        console.log("Używam MediaRecorder z typem:", mimeType || "domyślnym");
         mediaRecorder = new MediaRecorder(microphoneStream, options);
         
         // Start silence detection loop
@@ -309,6 +318,9 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
+        // Logowanie informacji o Blob
+        console.log(`Nagranie #${recordingId}: rozmiar=${audioBlob.size} bajtów, typ=${audioBlob.type}`);
+        
         // Create a new conversation entry for this recording
         const entryId = `entry-${recordingId}`;
         addConversationEntry(entryId);
@@ -319,8 +331,13 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Create form data for the API request
             const formData = new FormData();
-            formData.append('audio', audioBlob, `recording-${recordingId}.mp3`);
+            
+            // Dodaj nagranie z określonym typem MIME
+            const finalType = audioBlob.type || 'audio/mpeg';
+            formData.append('audio', new Blob([audioBlob], { type: finalType }), `recording-${recordingId}.mp3`);
             formData.append('webhook_url', webhookUrl);
+            
+            console.log(`Wysyłam nagranie #${recordingId} jako ${finalType}`);
             
             // Send the audio to the backend
             const response = await fetch('/api/transcribe', {
@@ -538,13 +555,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Find supported MIME type
     function getSupportedMimeType() {
-        // Try common audio formats in order of preference
+        // Try formats supported by OpenAI API in order of preference
         const mimeTypes = [
             'audio/mp3',
             'audio/mpeg',
-            'audio/webm',
-            'audio/ogg',
-            'audio/wav'
+            'audio/webm',  // webm jest obsługiwany przez OpenAI
+            'audio/wav'    // wav jest obsługiwany przez OpenAI
         ];
         
         for (const type of mimeTypes) {
@@ -552,6 +568,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log(`Przeglądarka wspiera nagrywanie w formacie ${type}`);
                 return type;
             }
+        }
+        
+        // Jeśli preferowane typy nie są dostępne, sprawdź opcje webm/opus, które są najczęściej dostępne
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            console.log('Przeglądarka wspiera nagrywanie w formacie audio/webm;codecs=opus');
+            return 'audio/webm;codecs=opus';
         }
         
         console.warn('Żaden z preferowanych typów MIME nie jest obsługiwany przez tę przeglądarkę');
