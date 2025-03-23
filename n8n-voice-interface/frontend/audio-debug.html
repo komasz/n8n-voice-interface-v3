@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Format Tester</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 15px;
+            margin: 5px;
+            background-color: #4361ee;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3f37c9;
+        }
+        .recording {
+            background-color: #f72585;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .log {
+            margin-top: 20px;
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Format Tester</h1>
+    
+    <div class="controls">
+        <h2>Parametry nagrywania</h2>
+        <div>
+            <label for="format-select">Format Audio:</label>
+            <select id="format-select">
+                <option value="audio/wav">WAV</option>
+                <option value="audio/webm">WEBM</option>
+                <option value="audio/webm;codecs=opus">WEBM+OPUS</option>
+                <option value="audio/mp3">MP3</option>
+                <option value="audio/mpeg">MPEG</option>
+                <option value="audio/ogg">OGG</option>
+            </select>
+        </div>
+        <div>
+            <label for="bitrate">Bitrate (bps):</label>
+            <input type="number" id="bitrate" value="64000" min="8000" max="256000" step="8000">
+        </div>
+        <div>
+            <label for="samplerate">Sample Rate (Hz):</label>
+            <select id="samplerate">
+                <option value="16000">16000</option>
+                <option value="22050">22050</option>
+                <option value="44100">44100</option>
+                <option value="48000">48000</option>
+            </select>
+        </div>
+        <div>
+            <button id="record-button">Start nagrywania</button>
+            <button id="download-button" disabled>Pobierz nagranie</button>
+        </div>
+    </div>
+    
+    <div>
+        <h2>Nagrane audio</h2>
+        <audio id="audio-player" controls></audio>
+    </div>
+    
+    <div>
+        <h2>Wspierane formaty</h2>
+        <pre id="supported-formats"></pre>
+    </div>
+    
+    <div class="log">
+        <h2>Logi</h2>
+        <div id="log-output"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const recordButton = document.getElementById('record-button');
+            const downloadButton = document.getElementById('download-button');
+            const audioPlayer = document.getElementById('audio-player');
+            const supportedFormats = document.getElementById('supported-formats');
+            const logOutput = document.getElementById('log-output');
+            const formatSelect = document.getElementById('format-select');
+            const bitrateInput = document.getElementById('bitrate');
+            const samplerateSelect = document.getElementById('samplerate');
+            
+            let mediaRecorder = null;
+            let audioChunks = [];
+            let audioBlob = null;
+            
+            // Check supported formats
+            function checkSupportedFormats() {
+                const formats = [
+                    'audio/wav',
+                    'audio/webm',
+                    'audio/webm;codecs=opus',
+                    'audio/mp3',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/ogg;codecs=opus'
+                ];
+                
+                const supported = formats.filter(format => MediaRecorder.isTypeSupported(format));
+                supportedFormats.textContent = JSON.stringify(supported, null, 2);
+                
+                // Update dropdown to only show supported formats
+                Array.from(formatSelect.options).forEach(option => {
+                    option.disabled = !supported.includes(option.value);
+                });
+                
+                // Select first supported format
+                if (supported.length > 0) {
+                    for (let i = 0; i < formatSelect.options.length; i++) {
+                        if (supported.includes(formatSelect.options[i].value)) {
+                            formatSelect.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                log('Sprawdzono obsługiwane formaty audio.');
+            }
+            
+            // Log helper
+            function log(message) {
+                const timestamp = new Date().toLocaleTimeString();
+                logOutput.innerHTML += `<div><strong>${timestamp}</strong>: ${message}</div>`;
+                logOutput.scrollTop = logOutput.scrollHeight;
+            }
+            
+            // Handle recording
+            recordButton.addEventListener('click', function() {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    stopRecording();
+                } else {
+                    startRecording();
+                }
+            });
+            
+            // Download button
+            downloadButton.addEventListener('click', function() {
+                if (audioBlob) {
+                    const url = URL.createObjectURL(audioBlob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'audio-test.' + getExtensionFromMimeType(audioBlob.type);
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    }, 100);
+                }
+            });
+            
+            // Get file extension from MIME type
+            function getExtensionFromMimeType(mimeType) {
+                if (mimeType.includes('wav')) return 'wav';
+                if (mimeType.includes('webm')) return 'webm';
+                if (mimeType.includes('mp3')) return 'mp3';
+                if (mimeType.includes('mpeg')) return 'mp3';
+                if (mimeType.includes('ogg')) return 'ogg';
+                return 'audio';
+            }
+            
+            // Start recording
+            async function startRecording() {
+                try {
+                    const mimeType = formatSelect.value;
+                    const sampleRate = parseInt(samplerateSelect.value);
+                    const bitrate = parseInt(bitrateInput.value);
+                    
+                    log(`Rozpoczynam nagrywanie: ${mimeType}, ${sampleRate}Hz, ${bitrate}bps`);
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            channelCount: 1,
+                            sampleRate: sampleRate,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+                    
+                    // Reset
+                    audioChunks = [];
+                    audioBlob = null;
+                    downloadButton.disabled = true;
+                    audioPlayer.src = '';
+                    
+                    // Create recorder
+                    const options = {
+                        mimeType: mimeType,
+                        audioBitsPerSecond: bitrate
+                    };
+                    
+                    mediaRecorder = new MediaRecorder(stream, options);
+                    
+                    mediaRecorder.ondataavailable = function(e) {
+                        audioChunks.push(e.data);
+                    };
+                    
+                    mediaRecorder.onstop = function() {
+                        log('Nagrywanie zakończone.');
+                        audioBlob = new Blob(audioChunks, { type: mimeType });
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        audioPlayer.src = audioUrl;
+                        
+                        log(`Wygenerowano plik audio: ${audioBlob.size} bajtów, typ: ${audioBlob.type}`);
+                        
+                        downloadButton.disabled = false;
+                        recordButton.textContent = 'Start nagrywania';
+                        recordButton.classList.remove('recording');
+                        
+                        // Zatrzymaj strumień audio
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+                    
+                    mediaRecorder.start();
+                    recordButton.textContent = 'Stop nagrywania';
+                    recordButton.classList.add('recording');
+                    
+                    log('Nagrywanie rozpoczęte.');
+                } catch (error) {
+                    log(`Błąd: ${error.message}`);
+                    console.error('Error starting recording:', error);
+                }
+            }
+            
+            // Stop recording
+            function stopRecording() {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    log('Zatrzymuję nagrywanie...');
+                }
+            }
+            
+            // Initialize
+            checkSupportedFormats();
+            log('Aplikacja gotowa. Wybierz format i rozpocznij nagrywanie.');
+        });
+    </script>
+</body>
+</html>
