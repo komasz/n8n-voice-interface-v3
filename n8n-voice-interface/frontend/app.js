@@ -49,8 +49,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let microphoneStream;
     let silenceDetectionInterval;
     
-    // Silence detection settings
-    const SILENCE_THRESHOLD = 15; // Threshold below which is considered silence
+    // Silence detection settings - obniżamy próg i dodajemy debug
+    // UWAGA: Te wartości są nadpisywane w funkcji startSilenceDetection
+    const SILENCE_THRESHOLD = 10; // Obniżony próg do wykrywania cichszej mowy
     const SILENCE_DURATION = 1500; // 1.5 seconds of silence to trigger stop
     const CHECK_INTERVAL = 100;   // Check every 100ms
     let silenceStartTime = null;
@@ -99,11 +100,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start continuous listening mode
     async function startListening() {
         try {
-            // Get microphone stream with optimal quality settings for OpenAI
+            console.log("Rozpoczynam inicjalizację ciągłego słuchania...");
+            
+            // Get microphone stream with optimal quality settings
+            console.log("Uzyskuję dostęp do mikrofonu z optymalnymi ustawieniami...");
             microphoneStream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
-                    channelCount: 1,                  // Mono audio (wymagane przez OpenAI)
-                    sampleRate: 44100,                // 44.1 kHz (standard CD)
+                    channelCount: 1,                  // Mono audio
+                    sampleRate: 44100,                // 44.1 kHz
                     echoCancellation: true,           // Redukcja echa
                     noiseSuppression: true,           // Redukcja szumów
                     autoGainControl: true,            // Automatyczna kontrola wzmocnienia
@@ -111,11 +115,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 } 
             });
             
-            console.log("Uzyskano dostęp do mikrofonu z optymalnymi ustawieniami");
+            console.log("Dostęp do mikrofonu uzyskany pomyślnie");
             
             // Setup audio context and analyzer
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            console.log(`Utworzono kontekst audio z sample rate: ${audioContext.sampleRate}Hz`);
+            console.log(`AudioContext utworzony z sample rate: ${audioContext.sampleRate}Hz`);
             
             audioSource = audioContext.createMediaStreamSource(microphoneStream);
             audioAnalyser = audioContext.createAnalyser();
@@ -124,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
             audioAnalyser.fftSize = 256;
             audioAnalyser.smoothingTimeConstant = 0.8;
             audioSource.connect(audioAnalyser);
+            console.log("Analizator audio skonfigurowany");
             
             // Reset detection state
             silenceStartTime = null;
@@ -131,13 +136,15 @@ document.addEventListener('DOMContentLoaded', () => {
             isListening = true;
             isRecording = false;
             
+            console.log("Rozpoczynam detekcję ciszy i mowy...");
             // Start silence detection loop
             startSilenceDetection();
             
             // Start visualization
             visualizationContainer.classList.add('active-visualization');
             
-            console.log("Ciągłe nasłuchiwanie aktywowane z optymalnymi ustawieniami audio");
+            console.log("Ciągłe nasłuchiwanie aktywowane pomyślnie");
+            showMessage("Nasłuchiwanie aktywne. Zacznij mówić!", "success");
             return true;
         } catch (error) {
             console.error("Błąd podczas inicjalizacji mikrofonu:", error);
@@ -201,10 +208,29 @@ document.addEventListener('DOMContentLoaded', () => {
         // Buffer for frequency data
         const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
         
+        // Debug - stwórz element do wyświetlania poziomu dźwięku
+        let debugInfoElement = document.createElement('div');
+        debugInfoElement.style.position = 'fixed';
+        debugInfoElement.style.bottom = '10px';
+        debugInfoElement.style.right = '10px';
+        debugInfoElement.style.padding = '5px';
+        debugInfoElement.style.background = 'rgba(0, 0, 0, 0.7)';
+        debugInfoElement.style.color = 'white';
+        debugInfoElement.style.borderRadius = '5px';
+        debugInfoElement.style.fontSize = '12px';
+        debugInfoElement.style.zIndex = '9999';
+        document.body.appendChild(debugInfoElement);
+        
+        // Obniżamy próg detekcji dźwięku
+        const SILENCE_THRESHOLD = 10; // Obniżony próg do wykrywania cichszej mowy
+        const SPEECH_THRESHOLD = 15;  // Próg rozpoczęcia nagrywania
+        const SILENCE_DURATION = 1500; // 1.5 sekundy ciszy, aby zakończyć
+        
         // Set up interval to check for speech and silence
         silenceDetectionInterval = setInterval(() => {
             if (!isListening) {
                 clearInterval(silenceDetectionInterval);
+                document.body.removeChild(debugInfoElement);
                 return;
             }
             
@@ -218,18 +244,26 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const average = sum / dataArray.length;
             
+            // Aktualizuj element debugowania
+            debugInfoElement.textContent = `Poziom dźwięku: ${average.toFixed(2)} | Próg: ${SPEECH_THRESHOLD} | ${isRecording ? 'Nagrywanie' : 'Oczekiwanie'} | ${speechDetected ? 'Mowa wykryta' : 'Cisza'}`;
+            debugInfoElement.style.backgroundColor = average > SPEECH_THRESHOLD ? 'rgba(0, 255, 0, 0.7)' : 'rgba(0, 0, 0, 0.7)';
+            
             // Update visualization (actual audio level)
             updateVisualization(average);
             
-            // User is speaking
-            if (average > SILENCE_THRESHOLD) {
-                // If audio is playing, stop playback
+            // User is speaking - wyższy próg dla rozpoczęcia nagrywania
+            if (average > SPEECH_THRESHOLD) {
+                // Jeśli odtwarzane jest audio, przerwij odtwarzanie
                 if (audioPlayer && !audioPlayer.paused) {
                     stopAudioPlayback();
                 }
                 
+                // Log poziomu dźwięku, gdy jest wyższy niż próg
+                console.log(`[Detekcja dźwięku] Poziom: ${average.toFixed(2)} > próg ${SPEECH_THRESHOLD}, nagrywanie: ${isRecording}`);
+                
                 // If not already recording, start a new recording
                 if (!isRecording) {
+                    console.log("Rozpoczynam nowe nagranie - wykryto mowę");
                     startNewRecording();
                 }
                 
@@ -237,17 +271,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 silenceStartTime = null;
                 speechDetected = true;
             } 
-            // User is silent
-            else {
+            // User is silent - niższy próg dla kontynuacji nagrywania
+            else if (average <= SILENCE_THRESHOLD) {
                 // Only check for end of speech if we're recording and speech was detected
                 if (isRecording && speechDetected) {
                     // If this is the start of silence
                     if (silenceStartTime === null) {
                         silenceStartTime = Date.now();
+                        console.log("Początek ciszy wykryty");
                     }
                     
                     // Check if silence has lasted long enough
                     const silenceDuration = Date.now() - silenceStartTime;
+                    
                     if (silenceDuration >= SILENCE_DURATION) {
                         console.log(`Cisza wykryta przez ${silenceDuration}ms. Kończę nagrywanie.`);
                         stopCurrentRecording();
@@ -256,6 +292,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         speechDetected = false;
                         silenceStartTime = null;
                     }
+                }
+            }
+            // Jeśli dźwięk jest pomiędzy progami (SILENCE_THRESHOLD < average <= SPEECH_THRESHOLD)
+            else {
+                // Jeśli nagrywamy i wykryliśmy mowę, resetujemy timer ciszy
+                if (isRecording && speechDetected) {
+                    silenceStartTime = null;
                 }
             }
         }, CHECK_INTERVAL);
