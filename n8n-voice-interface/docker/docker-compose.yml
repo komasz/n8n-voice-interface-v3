@@ -10,6 +10,8 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - STT_MODEL=gpt-4o-transcribe
+      - TTS_MODEL=gpt-4o-mini-tts
+      - TTS_VOICE=ash
       - PORT=8000
     volumes:
       - ./frontend:/app/frontend
