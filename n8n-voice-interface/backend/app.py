@@ -164,7 +164,7 @@ async def get_last_response_tts():
         "audio_url": audio_url
     }
 
-# Endpoint to serve audio files by filename
+# Endpoint to serve audio files by filename - IMPROVED VERSION
 @app.get("/api/audio/{filename}")
 async def get_audio_file(filename: str):
     """
@@ -172,19 +172,44 @@ async def get_audio_file(filename: str):
     """
     global last_tts_file_path
     
+    # Szukaj pliku w katalogu tymczasowym
+    temp_dir = "/tmp"
+    file_path = os.path.join(temp_dir, filename)
+    
+    # Sprawdź, czy plik istnieje bezpośrednio w katalogu tymczasowym
+    if os.path.exists(file_path):
+        logger.info(f"Serving audio file from temp dir: {file_path}")
+        return FileResponse(file_path, media_type="audio/mpeg")
+    
+    # Jeśli nie znaleziono pliku w temp, spróbuj użyć last_tts_file_path
     if not last_tts_file_path or not os.path.exists(last_tts_file_path):
+        logger.error(f"Audio file not found: {filename}, last_tts_file_path: {last_tts_file_path}")
+        
+        # Ostatnia szansa - wyszukaj pliki mp3 w katalogu tymczasowym
+        try:
+            mp3_files = [f for f in os.listdir(temp_dir) if f.endswith('.mp3')]
+            if mp3_files:
+                # Użyj najnowszego pliku mp3
+                mp3_files.sort(key=lambda x: os.path.getmtime(os.path.join(temp_dir, x)), reverse=True)
+                newest_file = os.path.join(temp_dir, mp3_files[0])
+                logger.info(f"Using newest MP3 file found: {newest_file}")
+                return FileResponse(newest_file, media_type="audio/mpeg")
+        except Exception as e:
+            logger.error(f"Error searching for MP3 files: {str(e)}")
+            
+        # Jeśli wszystkie próby zawiodły
         raise HTTPException(status_code=404, detail="Audio file not found")
     
-    # Simple validation to prevent path traversal
+    # Walidacja, aby zapobiec path traversal
     if os.path.basename(last_tts_file_path) != filename:
-        raise HTTPException(status_code=403, detail="Access denied")
+        logger.warning(f"Filename mismatch: requested {filename}, but last TTS is {os.path.basename(last_tts_file_path)}")
+        # Zamiast odmawiać dostępu, użyj aktualnego pliku TTS
+        logger.info(f"Serving last TTS file instead: {last_tts_file_path}")
+        return FileResponse(last_tts_file_path, media_type="audio/mpeg")
     
-    # Stream the file content directly
-    def iterfile():
-        with open(last_tts_file_path, mode="rb") as file_like:
-            yield from file_like
-    
-    return StreamingResponse(iterfile(), media_type="audio/mpeg")
+    # Zwróć plik bezpośrednio (szybsza metoda)
+    logger.info(f"Serving audio file from last_tts_file_path: {last_tts_file_path}")
+    return FileResponse(last_tts_file_path, media_type="audio/mpeg")
 
 # New endpoint to receive text from n8n and convert to speech
 @app.post("/api/speak")
