@@ -36,6 +36,9 @@ else:
 # Add the path to Python path
 sys.path.append(backend_path)
 
+# Change to the n8n-voice-interface directory
+os.chdir(N8N_DIR)
+
 # Try to run the application
 try:
     # Import the application
