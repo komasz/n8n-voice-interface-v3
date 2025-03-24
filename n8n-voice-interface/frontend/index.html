@@ -11,13 +11,13 @@
     <div class="container">
         <header>
             <h1>N8N Voice Interface</h1>
-            <p class="subtitle">Ciągłe słuchanie do wyzwalania przepływów n8n</p>
+            <p class="subtitle">Continuous listening to trigger n8n workflows</p>
         </header>
 
         <main>
             <div class="voice-interface">
                 <div id="status-container">
-                    <div id="status-message">Gotowy do słuchania</div>
+                    <div id="status-message">Ready to listen</div>
                     <div id="visualization-container">
                         <div class="visualization-bar"></div>
                         <div class="visualization-bar"></div>
@@ -28,7 +28,7 @@
                 </div>
 
                 <div class="microphone-container">
-                    <button id="record-button" class="record-button" title="Rozpocznij ciągłe słuchanie">
+                    <button id="record-button" class="record-button" title="Start continuous listening">
                         <i class="fas fa-microphone"></i>
                     </button>
                 </div>
@@ -38,16 +38,16 @@
 
                 <!-- Legacy containers kept for compatibility -->
                 <div id="transcription-container" class="hidden">
-                    <h3>Twoja wiadomość:</h3>
+                    <h3>Your message:</h3>
                     <div id="transcription-text"></div>
                 </div>
 
                 <div id="response-container" class="hidden">
-                    <h3>Odpowiedź N8N:</h3>
+                    <h3>N8N Response:</h3>
                     <div id="response-text"></div>
                     <div class="audio-controls">
                         <button id="play-again-button" class="btn-icon" onclick="document.querySelector('audio').play()">
-                            <i class="fas fa-play"></i> Odtwórz ponownie
+                            <i class="fas fa-play"></i> Play again
                         </button>
                     </div>
                 </div>
@@ -58,24 +58,24 @@
             </div>
 
             <div class="settings-container">
-                <h3>Ustawienia</h3>
+                <h3>Settings</h3>
                 <div class="form-group">
-                    <label for="webhook-url">URL Webhooka N8N:</label>
-                    <input type="text" id="webhook-url" placeholder="https://twoja-instancja-n8n.com/webhook/sciezka">
-                    <button id="save-settings" class="btn">Zapisz</button>
+                    <label for="webhook-url">N8N Webhook URL:</label>
+                    <input type="text" id="webhook-url" placeholder="https://your-n8n-instance.com/webhook/path">
+                    <button id="save-settings" class="btn">Save</button>
                 </div>
             </div>
 
             <div class="info-container">
                 <div class="info-box">
-                    <h3>Jak używać</h3>
+                    <h3>How to use</h3>
                     <ol>
-                        <li>Wprowadź URL webhooka n8n w ustawieniach</li>
-                        <li>Kliknij przycisk mikrofonu, aby włączyć ciągłe słuchanie</li>
-                        <li>Zacznij mówić - nagrywanie zatrzyma się automatycznie po wykryciu ciszy</li>
-                        <li>Twoja wypowiedź zostanie przetworzona i wysłana do n8n</li>
-                        <li>Możesz od razu zacząć mówić ponownie, bez czekania na odpowiedź</li>
-                        <li>Kliknij ponownie przycisk mikrofonu, aby wyłączyć ciągłe słuchanie</li>
+                        <li>Enter your n8n webhook URL in settings</li>
+                        <li>Click the microphone button to enable continuous listening</li>
+                        <li>Start speaking - recording will stop automatically after detecting silence</li>
+                        <li>Your speech will be processed and sent to n8n</li>
+                        <li>You can immediately start speaking again without waiting for a response</li>
+                        <li>Click the microphone button again to disable continuous listening</li>
                     </ol>
                 </div>
             </div>
