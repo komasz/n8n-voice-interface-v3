@@ -16,13 +16,14 @@ os.makedirs(temp_dir, exist_ok=True)
 # Add the project paths to the Python path
 project_path = os.path.dirname(os.path.abspath(__file__))
 n8n_path = os.path.join(project_path, "n8n-voice-interface")
-sys.path.insert(0, n8n_path)
+backend_path = os.path.join(n8n_path, "backend")
+sys.path.insert(0, backend_path)
 
 # Change working directory to n8n-voice-interface
 os.chdir(n8n_path)
 
 # Import the application
-from backend.app import app
+from app import app
 import uvicorn
 
 if __name__ == "__main__":
