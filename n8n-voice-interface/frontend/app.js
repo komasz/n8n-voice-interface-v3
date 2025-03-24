@@ -16,7 +16,7 @@ let processingBeepPlayer = null; // Odtwarzacz dźwięku przetwarzania
 let isListening = false;
 let isRecording = false;
 let isProcessing = false;
-let isProcessingResponse = false; // Nowa flaga do śledzenia przetwarzania odpowiedzi
+let isProcessingResponse = false; // Flaga do śledzenia przetwarzania odpowiedzi
 let mediaRecorder = null;
 let audioChunks = [];
 let recordingId = 0;
@@ -26,6 +26,15 @@ let audioSource;
 let microphoneStream;
 let silenceDetectionInterval;
 let activeRequests = 0;
+let microphoneConstraints = { // Konfiguracja mikrofonu - używamy globalnie
+    audio: {
+        channelCount: 1,
+        sampleRate: 44100,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+    } 
+};
 
 // Ustawienia dla wykrywania ciszy
 const SILENCE_THRESHOLD = 15; // Próg poniżej którego uznajemy za ciszę
@@ -85,13 +94,14 @@ window.getSupportedMimeType = function() {
 // Funkcja do rozpoczynania nasłuchiwania
 window.startListening = async function() {
     try {
-        // Get microphone stream
-        microphoneStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                channelCount: 1,
-                sampleRate: 44100
-            } 
-        });
+        // Sprawdź, czy mikrofon jest już aktywny - jeśli tak, najpierw go zatrzymaj
+        if (microphoneStream) {
+            window.stopMicrophone();
+        }
+        
+        // Uzyskaj strumień mikrofonu z optymalną konfiguracją
+        console.log("Uruchamiam mikrofon i zaczynam nasłuchiwanie...");
+        microphoneStream = await navigator.mediaDevices.getUserMedia(microphoneConstraints);
         
         // Setup audio context and analyzer
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -119,44 +129,66 @@ window.startListening = async function() {
         // Start visualization
         visualizationContainer.classList.add('active-visualization');
         
-        console.log("Continuous listening mode activated");
+        console.log("Continuous listening mode activated - microphone is ON");
+        recordButton.innerHTML = '<i class="fas fa-microphone-slash"></i>'; // Zmiana ikony na aktywną
     } catch (error) {
         console.error("Error starting listening:", error);
         throw error;
     }
 };
 
-// Funkcja do zatrzymywania nasłuchiwania
-window.stopListening = function() {
-    // Stop silence detection
-    clearInterval(silenceDetectionInterval);
+// Funkcja do zatrzymywania mikrofonu (bez zmiany stanu aplikacji)
+window.stopMicrophone = function() {
+    // Zatrzymaj detektory ciszy
+    if (silenceDetectionInterval) {
+        clearInterval(silenceDetectionInterval);
+        silenceDetectionInterval = null;
+    }
     
-    // Stop any active recording
+    // Zatrzymaj nagrywanie, jeśli jest aktywne
     if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
         isRecording = false;
     }
     
-    // Release microphone
+    // Zwolnij mikrofon
     if (microphoneStream) {
-        microphoneStream.getTracks().forEach(track => track.stop());
+        microphoneStream.getTracks().forEach(track => {
+            track.stop();
+            console.log("Microphone track stopped");
+        });
+        microphoneStream = null;
     }
     
-    // Close audio context
+    // Zamknij kontekst audio
     if (audioContext && audioContext.state !== 'closed') {
         audioContext.close().catch(e => console.error("Error closing audio context:", e));
+        audioContext = null;
+        audioSource = null;
+        audioAnalyser = null;
     }
     
-    // Update visualization
+    // Aktualizuj wizualizację
     visualizationContainer.classList.remove('active-visualization');
     
-    // Reset flags
-    isListening = false;
+    // Reset flag związanych z nagrywaniem
     isRecording = false;
-    isProcessingResponse = false;
     mediaRecorder = null;
     
+    console.log("Microphone stopped");
+};
+
+// Funkcja do zatrzymywania nasłuchiwania
+window.stopListening = function() {
+    // Zatrzymaj mikrofon i zwolnij zasoby
+    window.stopMicrophone();
+    
+    // Reset flag i stanu aplikacji
+    isListening = false;
+    isProcessingResponse = false;
+    
     console.log("Continuous listening mode deactivated");
+    recordButton.innerHTML = '<i class="fas fa-microphone"></i>'; // Zmiana ikony na nieaktywną
 };
 
 // Funkcja do przełączania nasłuchiwania
@@ -188,16 +220,49 @@ window.toggleContinuousListening = async function() {
     }
 };
 
+// Funkcja do wstrzymania nasłuchiwania na czas przetwarzania odpowiedzi
+window.pauseListeningForProcessing = function() {
+    if (!isListening) return;
+    
+    console.log("Wstrzymuję nasłuchiwanie na czas przetwarzania odpowiedzi");
+    
+    // Zatrzymaj mikrofon, aby oszczędzać baterię i zachować prywatność
+    window.stopMicrophone();
+    
+    // Ustaw odpowiednie flagi - nasłuchiwanie wciąż aktywne, ale przetwarzanie w toku
+    isProcessingResponse = true;
+    
+    // Aktualizuj status w interfejsie
+    window.updateStatus();
+    
+    // Aktualizuj wygląd przycisku na wyłączony mikrofon
+    recordButton.innerHTML = '<i class="fas fa-microphone"></i>';
+    
+    console.log("Microphone paused - processing response");
+};
+
 // Funkcja do wznowienia nasłuchiwania po przetworzeniu odpowiedzi
-window.resumeListeningAfterProcessing = function() {
+window.resumeListeningAfterProcessing = async function() {
     if (!isListening) return; // Jeśli nasłuchiwanie jest całkowicie wyłączone, nie wznawiaj
     
     console.log("Wznawiam nasłuchiwanie po przetworzeniu odpowiedzi");
-    isProcessingResponse = false;
-    window.showMessage('Ciągłe słuchanie wznowione. Możesz zadać kolejne pytanie.', 'success');
     
-    // Aktualizacja statusu
-    window.updateStatus();
+    try {
+        // Uruchom ponownie mikrofon i detektory dźwięku
+        await window.startListening();
+        
+        // Zaktualizuj flagi
+        isProcessingResponse = false;
+        
+        // Pokaż komunikat dla użytkownika
+        window.showMessage('Ciągłe słuchanie wznowione. Możesz zadać kolejne pytanie.', 'success');
+        
+        // Aktualizacja statusu
+        window.updateStatus();
+    } catch (error) {
+        console.error("Błąd podczas wznawiania nasłuchiwania:", error);
+        window.showMessage(`Błąd podczas wznawiania nasłuchiwania: ${error.message}`, 'error');
+    }
 };
 
 // Funkcja do odtwarzania powitania bez HEAD request
@@ -310,8 +375,9 @@ window.startSilenceDetection = function() {
     
     // Set up interval to check for speech and silence
     silenceDetectionInterval = setInterval(() => {
-        if (!isListening) {
+        if (!isListening || !audioAnalyser) {
             clearInterval(silenceDetectionInterval);
+            silenceDetectionInterval = null;
             return;
         }
         
@@ -341,7 +407,7 @@ window.startSilenceDetection = function() {
             }
             
             // If not already recording, start a new recording
-            if (!isRecording) {
+            if (!isRecording && microphoneStream) {
                 window.startNewRecording();
             }
             
@@ -403,6 +469,12 @@ window.startNewRecording = function() {
     const mimeType = window.getSupportedMimeType();
     const options = mimeType ? { mimeType } : {};
     
+    // Sprawdź, czy mamy aktywny strumień mikrofonu
+    if (!microphoneStream) {
+        console.error("Brak aktywnego strumienia mikrofonu, nie można rozpocząć nagrywania");
+        return;
+    }
+    
     // Jeśli nie mamy jeszcze MediaRecorder, utwórz go
     if (!mediaRecorder) {
         try {
@@ -451,17 +523,14 @@ window.startNewRecording = function() {
         
         // Only process if it's not too small
         if (audioBlob.size > 1000) {
-            // Ustaw flagę, że odpowiedź jest przetwarzana - to wyłączy nasłuchiwanie
-            isProcessingResponse = true;
-            
-            // Zaktualizuj status na interfejsie
-            window.updateStatus();
+            // Wstrzymaj nasłuchiwanie na czas przetwarzania odpowiedzi
+            window.pauseListeningForProcessing();
             
             // Odtwórz sygnał przetwarzania przed rozpoczęciem
             window.playProcessingBeep();
             
             // Wyświetl komunikat o wstrzymaniu nasłuchiwania
-            window.showMessage('Przetwarzanie zapytania. Nasłuchiwanie zostało wstrzymane do czasu otrzymania odpowiedzi.', 'info');
+            window.showMessage('Przetwarzanie zapytania. Mikrofon został wyłączony do czasu otrzymania odpowiedzi.', 'info');
             
             // Rozpocznij przetwarzanie po krótkim opóźnieniu, aby sygnał był słyszalny
             setTimeout(() => {
@@ -491,8 +560,7 @@ window.processRecording = async function(audioBlob, recordingId, fileExtension =
         window.showMessage('Proszę najpierw ustawić adres URL webhooka N8N w ustawieniach', 'error');
         
         // Wznów nasłuchiwanie, ponieważ nie będziemy przetwarzać
-        isProcessingResponse = false;
-        window.updateStatus();
+        window.resumeListeningAfterProcessing();
         return;
     }
     
@@ -603,14 +671,14 @@ window.handleN8nResponse = async function(text, entryId, audioUrl = null) {
         await window.playAudioResponseAndWait(audioUrl);
         
         // Po zakończeniu odtwarzania, wznów nasłuchiwanie
-        window.resumeListeningAfterProcessing();
+        await window.resumeListeningAfterProcessing();
         
     } catch (error) {
         console.error('Błąd podczas obsługi odpowiedzi:', error);
         window.updateConversationEntryWithError(entryId, error.message);
         
         // Wznów nasłuchiwanie nawet w przypadku błędu
-        window.resumeListeningAfterProcessing();
+        await window.resumeListeningAfterProcessing();
     }
 };
 
@@ -714,7 +782,7 @@ window.updateStatus = function() {
     }
     
     if (isProcessingResponse) {
-        statusMessage.textContent = 'Przetwarzanie zapytania... Nasłuchiwanie wstrzymane';
+        statusMessage.textContent = 'Przetwarzanie zapytania... Mikrofon wyłączony';
     } else if (activeRequests > 0) {
         statusMessage.textContent = `Ciągłe słuchanie aktywne... (${activeRequests} ${activeRequests === 1 ? 'zapytanie' : 'zapytania'} w toku)`;
     } else {
@@ -726,6 +794,14 @@ window.updateStatus = function() {
 window.updateVisualization = function(volume) {
     const bars = document.querySelectorAll('.visualization-bar');
     if (!bars.length) return;
+    
+    if (isProcessingResponse || !microphoneStream) {
+        // Jeśli przetwarzamy odpowiedź lub mikrofon jest wyłączony, ustaw niskie słupki
+        bars.forEach(bar => {
+            bar.style.height = '3px'; // Minimalny rozmiar
+        });
+        return;
+    }
     
     // Scale volume to visual height (0-50px)
     const scaledVolume = Math.min(50, volume * 1.5);
