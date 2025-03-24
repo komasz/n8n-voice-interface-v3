@@ -1,44 +1,49 @@
-// Ten skrypt należy dodać do index.html
-// Uruchamia powitanie i nasłuchiwanie automatycznie po załadowaniu strony
+// This script is added to index.html
+// Automatically runs the greeting and listening on page load
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('Uruchamiam skrypt automatycznego powitania i nasłuchiwania');
+    console.log('Starting automatic greeting and listening script');
     
-    // Domyślny webhook URL ustawiony bezpośrednio, jeśli nie ma zapisanego
+    // Default webhook URL set directly if none is saved
     const savedWebhookUrl = localStorage.getItem('webhookUrl');
     if (!savedWebhookUrl) {
-        // Ustaw domyślny webhook URL - konieczne do działania
-        const defaultWebhookUrl = 'https://twoja-instancja-n8n.com/webhook/domyslny';
+        // Set a placeholder webhook URL that clearly indicates it needs to be changed
+        const defaultWebhookUrl = 'http://YOUR-N8N-INSTANCE/webhook/YOUR-WEBHOOK-ID';
         localStorage.setItem('webhookUrl', defaultWebhookUrl);
         
-        // Zaktualizuj pole formularza
+        // Update the form field
         const webhookUrlInput = document.getElementById('webhook-url');
         if (webhookUrlInput) {
             webhookUrlInput.value = defaultWebhookUrl;
         }
+        
+        // Show message to user to update the webhook URL
+        if (window.showMessage) {
+            window.showMessage('Please update the N8N webhook URL in settings before using the voice interface', 'error');
+        }
     }
     
-    // Poczekaj 2 sekundy, żeby strona się załadowała
+    // Wait 2 seconds for the page to load
     setTimeout(async () => {
         try {
-            // Najpierw odtwórz powitanie
-            console.log('Powitanie rozpoczęte');
+            // First play the greeting
+            console.log('Starting greeting');
             const greetingSuccess = await window.playGreeting();
             
-            // Nawet jeśli powitanie się nie udało, kontynuuj z nasłuchiwaniem
-            console.log('Powitanie ' + (greetingSuccess ? 'zakończone' : 'nie powiodło się') + ', uruchamiam nasłuchiwanie');
+            // Even if the greeting fails, continue with listening
+            console.log('Greeting ' + (greetingSuccess ? 'completed' : 'failed') + ', starting listening');
             
-            // Następnie uruchom ciągłe nasłuchiwanie
+            // Then start continuous listening
             await window.toggleContinuousListening();
         } catch (error) {
             console.error('error:', error);
             
-            // Mimo błędu, spróbuj uruchomić nasłuchiwanie
+            // Despite the error, try to start listening
             try {
-                console.log('Próba uruchomienia nasłuchiwania mimo błędu powitania...');
+                console.log('Attempting to start listening despite greeting error...');
                 await window.toggleContinuousListening();
             } catch (listeningError) {
-                console.error('Nie udało się uruchomić nasłuchiwania:', listeningError);
+                console.error('Failed to start listening:', listeningError);
             }
         }
     }, 2000);
