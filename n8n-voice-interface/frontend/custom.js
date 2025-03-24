@@ -7,8 +7,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Default webhook URL set directly if none is saved
     const savedWebhookUrl = localStorage.getItem('webhookUrl');
     if (!savedWebhookUrl) {
-        // Set a placeholder webhook URL that clearly indicates it needs to be changed
-        const defaultWebhookUrl = 'http://YOUR-N8N-INSTANCE/webhook/YOUR-WEBHOOK-ID';
+        // Set the specific webhook URL as the default
+        const defaultWebhookUrl = 'https://performancetech.app.n8n.cloud/webhook/7e2b2075-de0d-430b-bc82-4981fac57da9';
         localStorage.setItem('webhookUrl', defaultWebhookUrl);
         
         // Update the form field
@@ -17,9 +17,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             webhookUrlInput.value = defaultWebhookUrl;
         }
         
-        // Show message to user to update the webhook URL
+        // Show success message to user that the webhook URL is preconfigured
         if (window.showMessage) {
-            window.showMessage('Please update the N8N webhook URL in settings before using the voice interface', 'error');
+            window.showMessage('Webhook URL jest skonfigurowany domyślnie. Możesz go zmienić w ustawieniach, jeśli potrzebujesz.', 'success');
         }
     }
     
