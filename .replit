@@ -10,7 +10,7 @@ mode = "sequential"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd n8n-voice-interface && python3 replit-main.py"
+args = "pip install -r requirements.txt && cd n8n-voice-interface && python3 replit-main.py"
 
 [nix]
 channel = "stable-24_05"
@@ -18,3 +18,6 @@ channel = "stable-24_05"
 [[ports]]
 localPort = 8080
 externalPort = 80
+
+[deployment]
+run = ["sh", "-c", "python replit-main.py"]
