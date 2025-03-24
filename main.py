@@ -1,10 +1,10 @@
+
 """
 Launcher script for N8N Voice Interface on Replit
 """
 import os
 import sys
 import shutil
-import subprocess
 
 # Get the root directory
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,10 +13,6 @@ REPLIT_MAIN_SRC = os.path.join(ROOT_DIR, "replit-main.py")
 REPLIT_MAIN_DST = os.path.join(N8N_DIR, "replit-main.py")
 
 print("Starting N8N Voice Interface launcher...")
-
-# Install required packages
-print("Installing required packages...")
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
 
 # Set environment variables
 if "STT_MODEL" not in os.environ:
