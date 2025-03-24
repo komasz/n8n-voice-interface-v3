@@ -1,12 +1,14 @@
 import logging
 import os
-import tempfile
-from fastapi import FastAPI, UploadFile, Form, HTTPException, BackgroundTasks, Request, Body
-from fastapi.responses import JSONResponse, FileResponse
+import json
+import base64
+from typing import Optional
+from fastapi import FastAPI, UploadFile, Form, HTTPException, BackgroundTasks, Request, Response
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import uvicorn
-from typing import Dict, Any, Optional
 
 from backend.stt import transcribe_audio
 from backend.webhook import send_to_n8n
@@ -18,13 +20,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Create temporary directory for audio files if it doesn't exist
-AUDIO_DIR = os.path.join(tempfile.gettempdir(), "audio_files")
-os.makedirs(AUDIO_DIR, exist_ok=True)
-
-# Store the last n8n response to replay if needed
-last_n8n_response = None
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -41,6 +36,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Store the last n8n response for retrieval
+last_n8n_response = None
+last_tts_file_path = None
+
+# Model for receiving text from n8n
+class TextRequest(BaseModel):
+    text: str
+
+# Response model for combined text and audio
+class AudioTextResponse(BaseModel):
+    text: str
+    audio_url: str
 
 # API endpoint for transcription
 @app.post("/api/transcribe")
@@ -65,113 +73,222 @@ async def transcribe_endpoint(
             raise HTTPException(status_code=500, detail="Transcription failed")
         
         transcribed_text = transcription_result["text"]
-        logger.info(f"Transcription successful: {transcribed_text[:30]}...")
+        logger.info(f"Transcription successful: {transcribed_text[:50]}...")
         
-        # Send to n8n webhook
+        # Send to n8n webhook and get response
         n8n_response = await send_to_n8n(webhook_url, {"transcription": transcribed_text})
         
-        # Check if n8n returned a response message
-        response_message = None
-        if isinstance(n8n_response, dict) and "message" in n8n_response:
-            response_message = n8n_response["message"]
-            logger.info(f"Stored n8n response: {response_message[:40]}...")
-            last_n8n_response = response_message
+        # Store the n8n response globally
+        if isinstance(n8n_response, dict) and "text" in n8n_response:
+            last_n8n_response = n8n_response
+            logger.info(f"Stored n8n response: {n8n_response['text'][:50]}...")
             
-            # Generate TTS for the n8n response
-            try:
-                tts_file = await text_to_speech(response_message)
-                logger.info(f"Generated TTS for n8n response, saved to: {tts_file}")
-            except Exception as e:
-                logger.error(f"Error generating TTS for n8n response: {str(e)}")
+            # Generate TTS for the response right away to have it ready
+            if background_tasks:
+                background_tasks.add_task(
+                    generate_tts_for_response,
+                    n8n_response["text"]
+                )
+            else:
+                await generate_tts_for_response(n8n_response["text"])
+                
+            # Return both the transcription and the n8n response
+            return {
+                "success": True,
+                "text": transcribed_text,
+                "n8nResponse": n8n_response
+            }
         
         return {
             "success": True,
-            "text": transcribed_text,
-            "response": response_message
+            "text": transcribed_text
         }
     
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# API endpoint for text-to-speech
-@app.post("/api/speak")
-async def speak_endpoint(request: Request):
+# Function to generate TTS for n8n response
+async def generate_tts_for_response(text: str):
     """
-    Convert text to speech and return the audio file URL.
+    Generate TTS for the n8n response and store the file path.
     """
+    global last_tts_file_path
+    
     try:
-        # Get the request body as JSON
-        data = await request.json()
-        text = data.get("text")
-        
-        if not text:
-            raise HTTPException(status_code=400, detail="Text is required")
-        
+        file_path = await text_to_speech(text)
+        last_tts_file_path = file_path
+        logger.info(f"Generated TTS for n8n response, saved to: {file_path}")
+    except Exception as e:
+        logger.error(f"Error generating TTS for n8n response: {str(e)}")
+
+# Endpoint to get the last n8n response
+@app.post("/api/get-n8n-response")
+async def get_n8n_response(request: dict):
+    """
+    Get the last n8n response, including webhook_url for verification.
+    """
+    if not last_n8n_response:
+        raise HTTPException(status_code=404, detail="No n8n response available")
+    
+    return last_n8n_response
+
+# Modified endpoint to get the last TTS file with text in the response body, not header
+@app.get("/api/last-response-tts")
+async def get_last_response_tts():
+    """
+    Get the TTS audio file for the last n8n response.
+    """
+    global last_tts_file_path, last_n8n_response
+    
+    if not last_tts_file_path or not os.path.exists(last_tts_file_path):
+        if last_n8n_response and "text" in last_n8n_response:
+            # Try to generate the TTS file if it doesn't exist
+            try:
+                last_tts_file_path = await text_to_speech(last_n8n_response["text"])
+            except Exception as e:
+                logger.error(f"Error generating TTS file: {str(e)}")
+                raise HTTPException(status_code=500, detail="Could not generate TTS file")
+        else:
+            raise HTTPException(status_code=404, detail="No TTS file available")
+    
+    # Get the text content
+    text_content = last_n8n_response["text"] if last_n8n_response and "text" in last_n8n_response else ""
+    
+    # Create a unique audio URL using the file path
+    audio_url = f"/api/audio/{os.path.basename(last_tts_file_path)}"
+    
+    # Return JSON with text and audio URL
+    return {
+        "text": text_content,
+        "audio_url": audio_url
+    }
+
+# Endpoint to serve audio files by filename
+@app.get("/api/audio/{filename}")
+async def get_audio_file(filename: str):
+    """
+    Serve an audio file by its filename.
+    """
+    global last_tts_file_path
+    
+    if not last_tts_file_path or not os.path.exists(last_tts_file_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    # Simple validation to prevent path traversal
+    if os.path.basename(last_tts_file_path) != filename:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Stream the file content directly
+    def iterfile():
+        with open(last_tts_file_path, mode="rb") as file_like:
+            yield from file_like
+    
+    return StreamingResponse(iterfile(), media_type="audio/mpeg")
+
+# New endpoint to receive text from n8n and convert to speech
+@app.post("/api/speak")
+async def speak_endpoint(request: TextRequest):
+    """
+    Receive text and convert it to speech.
+    """
+    global last_n8n_response, last_tts_file_path
+    
+    try:
+        text = request.text
         logger.info(f"Received text for TTS: {text[:50]}...")
         
-        # Generate speech
-        audio_file = await text_to_speech(text)
+        # Store this as the last n8n response for convenience
+        last_n8n_response = {"text": text}
         
-        # Get filename from path
-        filename = os.path.basename(audio_file)
+        # Convert text to speech
+        audio_path = await text_to_speech(text)
         
+        # Store the TTS file path
+        last_tts_file_path = audio_path
+        
+        # Create a unique audio URL using the file path
+        audio_url = f"/api/audio/{os.path.basename(audio_path)}"
+        
+        # Return JSON with text and audio URL instead of FileResponse
         return {
             "text": text,
-            "audio_url": f"/api/audio/{filename}"
+            "audio_url": audio_url
         }
     
     except Exception as e:
-        logger.error(f"Error processing TTS request: {str(e)}", exc_info=True)
+        logger.error(f"Error processing speak request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# Endpoint to serve audio files
-@app.get("/api/audio/{filename}")
-async def get_audio(filename: str):
+# Webhook endpoint that can handle both receiving text from n8n and sending transcriptions to n8n
+@app.post("/api/webhook/{webhook_id}")
+async def webhook_endpoint(
+    webhook_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks
+):
     """
-    Serve audio files from the temporary directory.
+    Bidirectional webhook endpoint for n8n integration.
+    Can receive text from n8n and return audio, or receive audio and send text to n8n.
     """
+    global last_n8n_response, last_tts_file_path
+    content_type = request.headers.get("content-type", "")
+    
     try:
-        # Check if file exists in temp directory
-        file_path = os.path.join(tempfile.gettempdir(), filename)
-        
-        if os.path.exists(file_path):
-            return FileResponse(
-                file_path, 
-                media_type="audio/mpeg", 
-                filename=filename
-            )
-        
-        # If file not found in regular temp dir, check AUDIO_DIR
-        file_path = os.path.join(AUDIO_DIR, filename)
-        if os.path.exists(file_path):
-            return FileResponse(
-                file_path, 
-                media_type="audio/mpeg", 
-                filename=filename
-            )
+        if "multipart/form-data" in content_type:
+            # This is an audio upload from the frontend
+            form_data = await request.form()
+            audio = form_data.get("audio")
+            webhook_url = form_data.get("webhook_url")
             
-        # File not found
-        raise HTTPException(status_code=404, detail="Audio file not found")
+            if not audio or not webhook_url:
+                raise HTTPException(status_code=400, detail="Missing audio or webhook_url")
+            
+            # Process as audio upload (similar to transcribe_endpoint)
+            transcription_result = await transcribe_audio(audio)
+            transcribed_text = transcription_result["text"]
+            
+            # Send to n8n webhook
+            n8n_response = await send_to_n8n(webhook_url, {"transcription": transcribed_text})
+            
+            # Store the response globally
+            if isinstance(n8n_response, dict) and "text" in n8n_response:
+                last_n8n_response = n8n_response
+            
+            return {
+                "success": True,
+                "text": transcribed_text,
+                "n8nResponse": n8n_response if isinstance(n8n_response, dict) else None
+            }
+            
+        else:
+            # This is a text response from n8n
+            body = await request.json()
+            
+            if "text" not in body:
+                raise HTTPException(status_code=400, detail="Missing 'text' field in request body")
+            
+            # Store as last n8n response
+            last_n8n_response = {"text": body["text"]}
+            
+            # Convert text to speech
+            audio_path = await text_to_speech(body["text"])
+            
+            # Store the TTS file path
+            last_tts_file_path = audio_path
+            
+            # Create a unique audio URL using the file path
+            audio_url = f"/api/audio/{os.path.basename(audio_path)}"
+            
+            # Return JSON with text and audio URL
+            return {
+                "text": body["text"],
+                "audio_url": audio_url
+            }
     
     except Exception as e:
-        logger.error(f"Error serving audio file: {str(e)}", exc_info=True)
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(status_code=500, detail=f"Error serving audio file: {str(e)}")
-
-# Endpoint to get the last n8n response
-@app.get("/api/last-response")
-async def get_last_response():
-    """
-    Return the last response from n8n.
-    """
-    global last_n8n_response
-    
-    if last_n8n_response:
-        return {"message": last_n8n_response}
-    else:
-        return {"message": None}
+        logger.error(f"Error processing webhook request: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Health check endpoint
 @app.get("/api/health")
@@ -182,7 +299,7 @@ async def health_check():
     return {"status": "ok"}
 
 # Mount static files for the frontend
-app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 # Run the application
 if __name__ == "__main__":
