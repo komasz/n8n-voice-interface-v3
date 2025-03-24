@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
+STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-transcribe")  # Updated to use gpt-4o-transcribe as default
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
