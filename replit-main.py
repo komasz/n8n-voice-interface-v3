@@ -15,7 +15,8 @@ os.makedirs(temp_dir, exist_ok=True)
 
 # Add the project paths to the Python path
 project_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(project_path)
+backend_path = os.path.join(project_path, "n8n-voice-interface")
+sys.path.append(backend_path)
 
 # Import the application
 from backend.app import app
