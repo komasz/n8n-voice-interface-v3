@@ -2,8 +2,7 @@ import os
 import logging
 import uuid
 import tempfile
-import requests
-import aiohttp
+import httpx
 import json
 from typing import Optional
 
@@ -44,23 +43,23 @@ async def text_to_speech(text: str) -> str:
         # Prepare the request payload
         payload = {
             "model": TTS_MODEL,
-            "voice": "ash",  # Using ash voice as requested
+            "voice": "ash",
             "input": text
         }
         
         logger.info(f"Making TTS request with model {TTS_MODEL} and voice ash")
         
         # Make the API request
-        async with aiohttp.ClientSession() as session:
-            async with session.post(API_URL, headers=headers, json=payload) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"OpenAI API error: {response.status} - {error_text}")
-                    raise Exception(f"TTS failed: {error_text}")
-                
-                # Save the audio response to a file
-                with open(output_file, 'wb') as f:
-                    f.write(await response.read())
+        async with httpx.AsyncClient() as client:
+            response = await client.post(API_URL, headers=headers, json=payload)
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error(f"OpenAI API error: {response.status_code} - {error_text}")
+                raise Exception(f"TTS failed: {error_text}")
+            
+            # Save the audio response to a file
+            with open(output_file, 'wb') as f:
+                f.write(response.content)
         
         logger.info(f"TTS successful: Output saved to {output_file}")
         return output_file
