@@ -1,10 +1,10 @@
 // This script is added to index.html
-// Automatically runs the greeting and listening on page load
+// Sets default webhook URL and modifies button behavior for first-time greeting
 
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log('Starting automatic greeting and listening script');
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Initializing voice interface...');
     
-    // Default webhook URL set directly if none is saved
+    // Set default webhook URL if none is saved
     const savedWebhookUrl = localStorage.getItem('webhookUrl');
     if (!savedWebhookUrl) {
         // Set the specific webhook URL as the default
@@ -23,28 +23,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
-    // Wait 2 seconds for the page to load
-    setTimeout(async () => {
-        try {
-            // First play the greeting
-            console.log('Starting greeting');
-            const greetingSuccess = await window.playGreeting();
-            
-            // Even if the greeting fails, continue with listening
-            console.log('Greeting ' + (greetingSuccess ? 'completed' : 'failed') + ', starting listening');
-            
-            // Then start continuous listening
-            await window.toggleContinuousListening();
-        } catch (error) {
-            console.error('error:', error);
-            
-            // Despite the error, try to start listening
+    // Modify the toggleContinuousListening function to play greeting on first click
+    // Store the original function
+    const originalToggleFunction = window.toggleContinuousListening;
+    
+    // Replace with our new function that checks if this is the first time
+    window.toggleContinuousListening = async function() {
+        // Check if this is the first time clicking the button
+        const greetingPlayed = localStorage.getItem('greetingPlayed');
+        
+        // If listening is not active and greeting hasn't been played yet
+        if (!window.isListening && !greetingPlayed) {
             try {
-                console.log('Attempting to start listening despite greeting error...');
-                await window.toggleContinuousListening();
-            } catch (listeningError) {
-                console.error('Failed to start listening:', listeningError);
+                console.log('First time clicking - playing greeting');
+                
+                // Play the greeting
+                await window.playGreeting();
+                
+                // Mark that greeting has been played
+                localStorage.setItem('greetingPlayed', 'true');
+                
+                // Now call the original function to start listening
+                return await originalToggleFunction();
+            } catch (error) {
+                console.error('Error playing first-time greeting:', error);
+                // Continue with original function if greeting fails
+                return await originalToggleFunction();
             }
+        } else {
+            // Not first time, just call original function
+            return await originalToggleFunction();
         }
-    }, 2000);
+    };
+    
+    console.log('Initialization complete - waiting for user to press microphone button');
 });
