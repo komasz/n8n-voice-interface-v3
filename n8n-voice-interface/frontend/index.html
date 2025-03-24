@@ -1,23 +1,23 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interfejs Głosowy N8N</title>
+    <title>N8N Voice Interface</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Interfejs Głosowy N8N</h1>
-            <p class="subtitle">Mów, aby uruchomić swoje procesy n8n</p>
+            <h1>N8N Voice Interface</h1>
+            <p class="subtitle">Ciągłe słuchanie do wyzwalania przepływów n8n</p>
         </header>
 
         <main>
             <div class="voice-interface">
                 <div id="status-container">
-                    <div id="status-message">Gotowy do nasłuchiwania</div>
+                    <div id="status-message">Gotowy do słuchania</div>
                     <div id="visualization-container">
                         <div class="visualization-bar"></div>
                         <div class="visualization-bar"></div>
@@ -28,14 +28,28 @@
                 </div>
 
                 <div class="microphone-container">
-                    <button id="record-button" class="record-button">
+                    <button id="record-button" class="record-button" title="Rozpocznij ciągłe słuchanie">
                         <i class="fas fa-microphone"></i>
                     </button>
                 </div>
+                
+                <!-- Conversation container for continuous listening -->
+                <div id="conversation-container" class="conversation-container hidden"></div>
 
+                <!-- Legacy containers kept for compatibility -->
                 <div id="transcription-container" class="hidden">
-                    <h3>Transkrypcja:</h3>
+                    <h3>Twoja wiadomość:</h3>
                     <div id="transcription-text"></div>
+                </div>
+
+                <div id="response-container" class="hidden">
+                    <h3>Odpowiedź N8N:</h3>
+                    <div id="response-text"></div>
+                    <div class="audio-controls">
+                        <button id="play-again-button" class="btn-icon" onclick="document.querySelector('audio').play()">
+                            <i class="fas fa-play"></i> Odtwórz ponownie
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -47,16 +61,8 @@
                 <h3>Ustawienia</h3>
                 <div class="form-group">
                     <label for="webhook-url">URL Webhooka N8N:</label>
-                    <input type="text" id="webhook-url" placeholder="https://twoja-instancja-n8n/webhook/sciezka">
+                    <input type="text" id="webhook-url" placeholder="https://twoja-instancja-n8n.com/webhook/sciezka">
                     <button id="save-settings" class="btn">Zapisz</button>
-                </div>
-                <div class="form-group">
-                    <label for="continuous-listening">Ciągłe nasłuchiwanie:</label>
-                    <div class="toggle-container">
-                        <input type="checkbox" id="continuous-listening" checked>
-                        <label for="continuous-listening" class="toggle-label"></label>
-                        <span class="toggle-text">Włączone</span>
-                    </div>
                 </div>
             </div>
 
@@ -65,16 +71,18 @@
                     <h3>Jak używać</h3>
                     <ol>
                         <li>Wprowadź URL webhooka n8n w ustawieniach</li>
-                        <li>Kliknij przycisk mikrofonu i zacznij mówić</li>
-                        <li>Twoja mowa zostanie transkrybowana i wysłana do n8n</li>
-                        <li>Sprawdź swój proces n8n dla przychodzących danych</li>
+                        <li>Kliknij przycisk mikrofonu, aby włączyć ciągłe słuchanie</li>
+                        <li>Zacznij mówić - nagrywanie zatrzyma się automatycznie po wykryciu ciszy</li>
+                        <li>Twoja wypowiedź zostanie przetworzona i wysłana do n8n</li>
+                        <li>Możesz od razu zacząć mówić ponownie, bez czekania na odpowiedź</li>
+                        <li>Kliknij ponownie przycisk mikrofonu, aby wyłączyć ciągłe słuchanie</li>
                     </ol>
                 </div>
             </div>
         </main>
 
         <footer>
-            <p>Zasilane przez OpenAI gpt-4o-transcribe | <a href="https://github.com/yourusername/n8n-voice-interface" target="_blank">Zobacz na GitHub</a></p>
+            <p>Powered by OpenAI's gpt-4o-transcribe & gpt-4o-mini-tts | <a href="https://github.com/yourusername/n8n-voice-interface" target="_blank">View on GitHub</a></p>
         </footer>
     </div>
 
