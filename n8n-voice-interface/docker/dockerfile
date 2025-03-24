@@ -24,6 +24,8 @@ RUN mkdir -p /tmp/audio
 # Set environment variables
 ENV PORT=8000
 ENV STT_MODEL=gpt-4o-transcribe
+ENV TTS_MODEL=gpt-4o-mini-tts
+ENV TTS_VOICE=ash
 ENV PYTHONPATH=/app
 
 # Set working directory to backend
