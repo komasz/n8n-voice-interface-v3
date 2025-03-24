@@ -11,8 +11,8 @@ from pydantic import BaseModel
 import uvicorn
 
 from stt import transcribe_audio
-from backend.webhook import send_to_n8n
-from backend.tts import text_to_speech
+from webhook import send_to_n8n
+from tts import text_to_speech
 
 # Configure logging
 logging.basicConfig(
