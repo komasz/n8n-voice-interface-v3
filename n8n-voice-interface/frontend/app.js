@@ -184,7 +184,7 @@ window.toggleContinuousListening = async function() {
     }
 };
 
-// Funkcja do odtwarzania powitania
+// Funkcja do odtwarzania powitania bez HEAD request
 window.playGreeting = async function(greetingText = "Cześć. jestem agentem depilacja.pl, jak mogę Ci pomóc?") {
     console.log("Rozpoczynam odtwarzanie powitania...");
     
@@ -222,66 +222,36 @@ window.playGreeting = async function(greetingText = "Cześć. jestem agentem dep
         
         console.log(`URL audio powitania: ${audioUrl}`);
         
-        // Weryfikuj URL przed odtwarzaniem
-        try {
-            const checkResponse = await fetch(audioUrl, { method: 'HEAD' });
-            if (!checkResponse.ok) {
-                throw new Error(`Plik audio niedostępny (status ${checkResponse.status})`);
-            }
-            
-            // Sprawdź typ MIME
-            const contentType = checkResponse.headers.get('content-type');
-            console.log(`Typ MIME pliku audio: ${contentType || 'nieznany'}`);
-            
-            // Pobierz plik audio jako blob dla większej niezawodności
-            const audioResponse = await fetch(audioUrl);
-            const audioBlob = await audioResponse.blob();
-            const blobUrl = URL.createObjectURL(audioBlob);
-            console.log(`Utworzono lokalny URL blob: ${blobUrl}`);
-            
-            // Ustaw źródło audio
-            audioPlayer.src = blobUrl;
-            console.log("Rozpoczynam odtwarzanie audio...");
-            
-            // Ustawienie obsługi błędów odtwarzania
-            audioPlayer.onerror = (e) => {
-                console.error("Błąd odtwarzania powitania:", e);
-                console.error('Kod błędu:', audioPlayer.error ? audioPlayer.error.code : 'nieznany');
-                console.error('Wiadomość błędu:', audioPlayer.error ? audioPlayer.error.message : 'nieznana');
-                throw new Error(`Błąd odtwarzania: ${audioPlayer.error ? audioPlayer.error.message : 'nieznany błąd'}`);
+        // Ustaw źródło audio bezpośrednio
+        audioPlayer.src = audioUrl;
+        
+        // Obsługa błędów
+        audioPlayer.onerror = (e) => {
+            console.error("Błąd odtwarzania powitania:", e);
+            throw new Error("Błąd odtwarzania");
+        };
+        
+        // Użyj Promise, aby poczekać na zakończenie odtwarzania
+        await new Promise((resolve, reject) => {
+            audioPlayer.onended = () => {
+                console.log("Odtwarzanie powitania zakończone");
+                resolve();
             };
             
-            // Użyj Promise, aby poczekać na zakończenie odtwarzania
-            await new Promise((resolve, reject) => {
-                audioPlayer.onended = () => {
-                    console.log("Odtwarzanie powitania zakończone");
-                    // Zwolnij URL Blob
-                    URL.revokeObjectURL(blobUrl);
-                    resolve();
-                };
-                
-                audioPlayer.onerror = (e) => {
-                    console.error("Błąd odtwarzania powitania:", e);
-                    // Zwolnij URL Blob
-                    URL.revokeObjectURL(blobUrl);
-                    reject(new Error("Błąd odtwarzania"));
-                };
-                
-                // Rozpocznij odtwarzanie z obsługą błędów
-                audioPlayer.play().catch(err => {
-                    console.error("Błąd podczas rozpoczęcia odtwarzania:", err);
-                    // Zwolnij URL Blob
-                    URL.revokeObjectURL(blobUrl);
-                    reject(err);
-                });
-            });
+            audioPlayer.onerror = (e) => {
+                console.error("Błąd odtwarzania powitania:", e);
+                reject(new Error("Błąd odtwarzania"));
+            };
             
-            console.log("Funkcja playGreeting zakończona pomyślnie");
-            return true;
-        } catch (fetchError) {
-            console.error("Błąd dostępu do pliku audio:", fetchError);
-            throw new Error(`Nie można uzyskać dostępu do pliku audio: ${fetchError.message}`);
-        }
+            // Rozpocznij odtwarzanie z obsługą błędów
+            audioPlayer.play().catch(err => {
+                console.error("Błąd podczas rozpoczęcia odtwarzania:", err);
+                reject(err);
+            });
+        });
+        
+        console.log("Funkcja playGreeting zakończona pomyślnie");
+        return true;
     } catch (error) {
         console.error("Błąd w funkcji playGreeting:", error);
         // Spróbuj kontynuować bez odtwarzania audio
@@ -690,7 +660,7 @@ window.updateVisualization = function(volume) {
     });
 };
 
-// Funkcja do odtwarzania odpowiedzi audio z lepszą obsługą błędów
+// Funkcja do odtwarzania odpowiedzi audio bez HEAD request
 window.playAudioResponse = function(audioUrl, buttonElement = null) {
     // Zatrzymaj aktualnie odtwarzany dźwięk
     if (audioPlayer) {
@@ -715,92 +685,85 @@ window.playAudioResponse = function(audioUrl, buttonElement = null) {
     
     console.log(`Próba odtwarzania audio z URL: ${absoluteUrl}`);
     
-    // Weryfikacja URL przed odtwarzaniem
-    fetch(absoluteUrl, { method: 'HEAD' })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`Plik audio niedostępny (status ${response.status})`);
-            }
+    // Ustaw źródło audio bezpośrednio
+    audioPlayer.src = absoluteUrl;
+    
+    // Dodaj odpowiednią obsługę błędów
+    audioPlayer.onerror = function(e) {
+        console.error('Błąd odtwarzania audio:', e);
+        console.error('Kod błędu:', audioPlayer.error ? audioPlayer.error.code : 'nieznany');
+        console.error('Wiadomość błędu:', audioPlayer.error ? audioPlayer.error.message : 'nieznana');
+        
+        window.showMessage(`Błąd odtwarzania audio: ${audioPlayer.error ? audioPlayer.error.message : 'nieznany błąd'}`, 'error');
+        
+        // Reset przycisku w przypadku błędu
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+        }
+    };
+    
+    // Obsługa zakończenia odtwarzania
+    audioPlayer.onended = () => {
+        console.log('Odtwarzanie dźwięku zakończone');
+        
+        // Reset przycisku po zakończeniu odtwarzania
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+        }
+    };
+    
+    // Aktualizacja stanu przycisku
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<i class="fas fa-volume-up"></i> Odtwarzanie...';
+    }
+    
+    // Odtwórz audio z obsługą błędów
+    audioPlayer.play()
+        .catch(error => {
+            console.error('Błąd odtwarzania dźwięku:', error);
             
-            // Sprawdź typ MIME
-            const contentType = response.headers.get('content-type');
-            console.log(`Typ MIME pliku audio: ${contentType || 'nieznany'}`);
-            
-            // Pobierz plik audio jako blob dla większej niezawodności
-            return fetch(absoluteUrl);
-        })
-        .then(response => response.blob())
-        .then(blob => {
-            const blobUrl = URL.createObjectURL(blob);
-            console.log(`Utworzono lokalny URL blob: ${blobUrl}`);
-            
-            // Ustaw nowe źródło audio
-            audioPlayer.src = blobUrl;
-            
-            // Dodaj lepszą obsługę błędów
-            audioPlayer.onerror = function(e) {
-                console.error('Błąd odtwarzania audio:', e);
-                console.error('Kod błędu:', audioPlayer.error ? audioPlayer.error.code : 'nieznany');
-                console.error('Wiadomość błędu:', audioPlayer.error ? audioPlayer.error.message : 'nieznana');
+            // Spróbuj alternatywną metodę dostępu do pliku audio
+            if (audioUrl.includes('/api/audio/')) {
+                console.log('Próbuję alternatywną metodę dostępu do audio...');
                 
-                window.showMessage(`Błąd odtwarzania audio: ${audioPlayer.error ? audioPlayer.error.message : 'nieznany błąd'}`, 'error');
-                
-                // Zwolnij URL Blob
-                URL.revokeObjectURL(blobUrl);
+                // Spróbuj pobrać najnowszą odpowiedź audio
+                fetch('/api/last-response-tts')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Nie można pobrać najnowszego audio');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.audio_url) {
+                            console.log(`Odtwarzam najnowsze audio: ${data.audio_url}`);
+                            audioPlayer.src = window.location.origin + data.audio_url;
+                            return audioPlayer.play();
+                        } else {
+                            throw new Error('Brak URL audio w odpowiedzi');
+                        }
+                    })
+                    .catch(finalError => {
+                        console.error('Ostateczny błąd odtwarzania:', finalError);
+                        window.showMessage('Nie można odtworzyć dźwięku', 'error');
+                        
+                        // Reset przycisku w przypadku błędu
+                        if (buttonElement) {
+                            buttonElement.disabled = false;
+                            buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+                        }
+                    });
+            } else {
+                window.showMessage('Błąd odtwarzania odpowiedzi dźwiękowej', 'error');
                 
                 // Reset przycisku w przypadku błędu
                 if (buttonElement) {
                     buttonElement.disabled = false;
                     buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
                 }
-            };
-            
-            // Aktualizuj stan przycisku, jeśli został podany
-            if (buttonElement) {
-                buttonElement.disabled = true;
-                buttonElement.innerHTML = '<i class="fas fa-volume-up"></i> Odtwarzanie...';
-                
-                // Resetuj przycisk po zakończeniu odtwarzania
-                audioPlayer.onended = () => {
-                    console.log('Odtwarzanie dźwięku zakończone');
-                    buttonElement.disabled = false;
-                    buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
-                    // Zwolnij URL Blob
-                    URL.revokeObjectURL(blobUrl);
-                };
-            } else {
-                // Obsługa zakończenia odtwarzania
-                audioPlayer.onended = () => {
-                    console.log('Odtwarzanie dźwięku zakończone');
-                    // Zwolnij URL Blob
-                    URL.revokeObjectURL(blobUrl);
-                };
-            }
-            
-            // Odtwórz audio z obsługą błędów
-            audioPlayer.play()
-                .catch(error => {
-                    console.error('Błąd odtwarzania dźwięku:', error);
-                    window.showMessage('Błąd odtwarzania odpowiedzi dźwiękowej', 'error');
-                    
-                    // Zwolnij URL Blob
-                    URL.revokeObjectURL(blobUrl);
-                    
-                    // Reset przycisku w przypadku błędu
-                    if (buttonElement) {
-                        buttonElement.disabled = false;
-                        buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
-                    }
-                });
-        })
-        .catch(error => {
-            console.error('Błąd weryfikacji URL audio:', error);
-            window.showMessage(`Błąd dostępu do pliku audio: ${error.message}`, 'error');
-            
-            // Resetuj przycisk w przypadku błędu
-            if (buttonElement) {
-                buttonElement.disabled = false;
-                buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
             }
         });
 };
