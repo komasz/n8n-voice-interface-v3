@@ -131,9 +131,39 @@ window.startListening = async function() {
         
         console.log("Continuous listening mode activated - microphone is ON");
         recordButton.innerHTML = '<i class="fas fa-microphone-slash"></i>'; // Zmiana ikony na aktywną
+        
+        // Odtwórz dźwięk beep sygnalizujący rozpoczęcie słuchania
+        window.playStartListeningBeep();
     } catch (error) {
         console.error("Error starting listening:", error);
         throw error;
+    }
+};
+
+// Funkcja do odtwarzania dźwięku rozpoczęcia słuchania
+window.playStartListeningBeep = function() {
+    try {
+        // Utwórz odtwarzacz audio, jeśli potrzeba
+        if (!processingBeepPlayer) {
+            processingBeepPlayer = new Audio();
+        }
+        
+        // Ustaw źródło na dźwięk sygnalizacyjny
+        processingBeepPlayer.src = 'processing-beep.mp3';
+        
+        // Skonfiguruj aby odtwarzać raz
+        processingBeepPlayer.loop = false;
+        
+        // Odtwórz dźwięk
+        processingBeepPlayer.play().catch(error => {
+            console.error('Błąd odtwarzania sygnału rozpoczęcia słuchania:', error);
+        });
+        
+        console.log('Odtwarzanie sygnału rozpoczęcia słuchania');
+        return true;
+    } catch (error) {
+        console.error('Błąd w funkcji playStartListeningBeep:', error);
+        return false;
     }
 };
 
