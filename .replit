@@ -1,24 +1,31 @@
-modules = ["nodejs-20", "python-3.12", "web", "nix"]
-run = "uvicorn main:app --host 0.0.0.0 --port 3000"
+run = "python main.py"
+entrypoint = "main.py"
 
-[workflows]
-runButton = "Run"
+# Environment variables
+[env]
+PYTHONPATH = "${PYTHONPATH}:${REPL_HOME}:${REPL_HOME}/n8n-voice-interface:${REPL_HOME}/n8n-voice-interface/backend"
+PYTHONUNBUFFERED = "1"
+STT_MODEL = "gpt-4o-transcribe"
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICE = "ash"
 
-[[workflows.workflow]]
-name = "Run"
-author = 38859788
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python3 replit-main.py"
-
+# Nix configuration
 [nix]
 channel = "stable-24_05"
 
+# Port configuration
 [[ports]]
 localPort = 8080
 externalPort = 80
 
+# Deployment settings
 [deployment]
-run = ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 3000"]
+run = ["sh", "-c", "python main.py"]
+deploymentTarget = "cloudrun"
+
+# Language settings
+[languages]
+[languages.python3]
+pattern = "**/*.py"
+[languages.python3.languageServer]
+start = ["pylsp"]

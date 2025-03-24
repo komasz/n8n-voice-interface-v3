@@ -324,7 +324,7 @@ async def health_check():
     return {"status": "ok"}
 
 # Mount static files for the frontend
-app.mount("/", StaticFiles(directory="/home/runner/workspace/n8n-voice-interface/frontend", html=True), name="frontend")
+app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
 
 # Run the application
 if __name__ == "__main__":
