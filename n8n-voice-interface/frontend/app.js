@@ -12,10 +12,11 @@ let responseContainer;
 let responseText;
 let conversationContainer;
 let audioPlayer;
-let processingBeepPlayer = null; // Nowa zmienna dla odtwarzacza dźwięku przetwarzania
+let processingBeepPlayer = null; // Odtwarzacz dźwięku przetwarzania
 let isListening = false;
 let isRecording = false;
 let isProcessing = false;
+let isProcessingResponse = false; // Nowa flaga do śledzenia przetwarzania odpowiedzi
 let mediaRecorder = null;
 let audioChunks = [];
 let recordingId = 0;
@@ -107,6 +108,7 @@ window.startListening = async function() {
         speechDetected = false;
         isListening = true;
         isRecording = false;
+        isProcessingResponse = false; // Reset na początku
         
         // Ważne: Nie tworzymy mediaRecorder od razu - zrobimy to przy rozpoczęciu nagrywania
         mediaRecorder = null;
@@ -151,6 +153,7 @@ window.stopListening = function() {
     // Reset flags
     isListening = false;
     isRecording = false;
+    isProcessingResponse = false;
     mediaRecorder = null;
     
     console.log("Continuous listening mode deactivated");
@@ -183,6 +186,18 @@ window.toggleContinuousListening = async function() {
             throw error;
         }
     }
+};
+
+// Funkcja do wznowienia nasłuchiwania po przetworzeniu odpowiedzi
+window.resumeListeningAfterProcessing = function() {
+    if (!isListening) return; // Jeśli nasłuchiwanie jest całkowicie wyłączone, nie wznawiaj
+    
+    console.log("Wznawiam nasłuchiwanie po przetworzeniu odpowiedzi");
+    isProcessingResponse = false;
+    window.showMessage('Ciągłe słuchanie wznowione. Możesz zadać kolejne pytanie.', 'success');
+    
+    // Aktualizacja statusu
+    window.updateStatus();
 };
 
 // Funkcja do odtwarzania powitania bez HEAD request
@@ -313,6 +328,11 @@ window.startSilenceDetection = function() {
         // Update visualization
         window.updateVisualization(average);
         
+        // Jeśli odpowiedź jest w trakcie przetwarzania, nie rozpoczynaj nowego nagrywania
+        if (isProcessingResponse) {
+            return;
+        }
+        
         // User is speaking
         if (average > SILENCE_THRESHOLD) {
             // Jeśli odtwarzane jest audio, przerwij odtwarzanie
@@ -431,8 +451,17 @@ window.startNewRecording = function() {
         
         // Only process if it's not too small
         if (audioBlob.size > 1000) {
+            // Ustaw flagę, że odpowiedź jest przetwarzana - to wyłączy nasłuchiwanie
+            isProcessingResponse = true;
+            
+            // Zaktualizuj status na interfejsie
+            window.updateStatus();
+            
             // Odtwórz sygnał przetwarzania przed rozpoczęciem
             window.playProcessingBeep();
+            
+            // Wyświetl komunikat o wstrzymaniu nasłuchiwania
+            window.showMessage('Przetwarzanie zapytania. Nasłuchiwanie zostało wstrzymane do czasu otrzymania odpowiedzi.', 'info');
             
             // Rozpocznij przetwarzanie po krótkim opóźnieniu, aby sygnał był słyszalny
             setTimeout(() => {
@@ -460,6 +489,10 @@ window.processRecording = async function(audioBlob, recordingId, fileExtension =
     
     if (!webhookUrl) {
         window.showMessage('Proszę najpierw ustawić adres URL webhooka N8N w ustawieniach', 'error');
+        
+        // Wznów nasłuchiwanie, ponieważ nie będziemy przetwarzać
+        isProcessingResponse = false;
+        window.updateStatus();
         return;
     }
     
@@ -503,7 +536,7 @@ window.processRecording = async function(audioBlob, recordingId, fileExtension =
         // Process the response from n8n
         if (data.n8nResponse && data.n8nResponse.text) {
             console.log(`Otrzymano natychmiastową odpowiedź dla nagrania #${recordingId}`);
-            window.handleN8nResponse(data.n8nResponse.text, entryId);
+            await window.handleN8nResponse(data.n8nResponse.text, entryId);
         } else {
             // Try to get the response via last-response-tts endpoint
             try {
@@ -518,21 +551,24 @@ window.processRecording = async function(audioBlob, recordingId, fileExtension =
                     const responseData = await n8nResponse.json();
                     
                     if (responseData.text && responseData.audio_url) {
-                        window.handleN8nResponse(responseData.text, entryId, responseData.audio_url);
+                        await window.handleN8nResponse(responseData.text, entryId, responseData.audio_url);
                     } else {
-                        window.handleDefaultResponse(entryId);
+                        await window.handleDefaultResponse(entryId);
                     }
                 } else {
-                    window.handleDefaultResponse(entryId);
+                    await window.handleDefaultResponse(entryId);
                 }
             } catch (error) {
                 console.error(`Błąd podczas pobierania odpowiedzi dla nagrania #${recordingId}:`, error);
-                window.handleDefaultResponse(entryId);
+                await window.handleDefaultResponse(entryId);
             }
         }
     } catch (error) {
         console.error(`Błąd podczas przetwarzania nagrania #${recordingId}:`, error);
         window.updateConversationEntryWithError(entryId, error.message);
+        
+        // Wznów nasłuchiwanie nawet w przypadku błędu
+        window.resumeListeningAfterProcessing();
     } finally {
         activeRequests--;
         window.updateStatus();
@@ -563,19 +599,25 @@ window.handleN8nResponse = async function(text, entryId, audioUrl = null) {
         // Update conversation entry with response
         window.updateConversationEntryWithResponse(entryId, text, audioUrl);
         
-        // Play audio
-        window.playAudioResponse(audioUrl);
+        // Play audio and wait for it to finish
+        await window.playAudioResponseAndWait(audioUrl);
+        
+        // Po zakończeniu odtwarzania, wznów nasłuchiwanie
+        window.resumeListeningAfterProcessing();
         
     } catch (error) {
         console.error('Błąd podczas obsługi odpowiedzi:', error);
         window.updateConversationEntryWithError(entryId, error.message);
+        
+        // Wznów nasłuchiwanie nawet w przypadku błędu
+        window.resumeListeningAfterProcessing();
     }
 };
 
 // Funkcja do obsługi domyślnej odpowiedzi
-window.handleDefaultResponse = function(entryId) {
+window.handleDefaultResponse = async function(entryId) {
     const defaultText = "Niestety, nie mogę sprawdzić bieżących informacji. Czy mogę pomóc w czymś innym?";
-    window.handleN8nResponse(defaultText, entryId);
+    await window.handleN8nResponse(defaultText, entryId);
 };
 
 // Funkcja do dodawania nowego wpisu konwersacji
@@ -671,7 +713,9 @@ window.updateStatus = function() {
         return;
     }
     
-    if (activeRequests > 0) {
+    if (isProcessingResponse) {
+        statusMessage.textContent = 'Przetwarzanie zapytania... Nasłuchiwanie wstrzymane';
+    } else if (activeRequests > 0) {
         statusMessage.textContent = `Ciągłe słuchanie aktywne... (${activeRequests} ${activeRequests === 1 ? 'zapytanie' : 'zapytania'} w toku)`;
     } else {
         statusMessage.textContent = 'Ciągłe słuchanie aktywne...';
@@ -694,7 +738,88 @@ window.updateVisualization = function(volume) {
     });
 };
 
-// Funkcja do odtwarzania odpowiedzi audio bez HEAD request
+// Funkcja do odtwarzania odpowiedzi audio i oczekiwania na zakończenie
+window.playAudioResponseAndWait = async function(audioUrl, buttonElement = null) {
+    return new Promise((resolve, reject) => {
+        try {
+            // Zatrzymaj aktualnie odtwarzany dźwięk
+            if (audioPlayer) {
+                audioPlayer.pause();
+                audioPlayer.currentTime = 0;
+            } else {
+                audioPlayer = new Audio();
+            }
+            
+            // Sprawdź, czy URL nie jest pusty
+            if (!audioUrl) {
+                console.error('Błąd odtwarzania: brak URL audio');
+                window.showMessage('Błąd odtwarzania: brak URL audio', 'error');
+                return reject(new Error('Brak URL audio'));
+            }
+            
+            // Upewnij się, że URL jest absolutny
+            let absoluteUrl = audioUrl;
+            if (!audioUrl.startsWith('http') && !audioUrl.startsWith('blob:')) {
+                absoluteUrl = window.location.origin + audioUrl;
+            }
+            
+            console.log(`Próba odtwarzania audio z URL: ${absoluteUrl}`);
+            
+            // Ustaw źródło audio bezpośrednio
+            audioPlayer.src = absoluteUrl;
+            
+            // Aktualizacja stanu przycisku
+            if (buttonElement) {
+                buttonElement.disabled = true;
+                buttonElement.innerHTML = '<i class="fas fa-volume-up"></i> Odtwarzanie...';
+            }
+            
+            // Obsługa zakończenia odtwarzania
+            audioPlayer.onended = () => {
+                console.log('Odtwarzanie dźwięku zakończone');
+                
+                // Reset przycisku po zakończeniu odtwarzania
+                if (buttonElement) {
+                    buttonElement.disabled = false;
+                    buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+                }
+                
+                resolve();
+            };
+            
+            // Dodaj odpowiednią obsługę błędów
+            audioPlayer.onerror = function(e) {
+                console.error('Błąd odtwarzania audio:', e);
+                
+                // Reset przycisku w przypadku błędu
+                if (buttonElement) {
+                    buttonElement.disabled = false;
+                    buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+                }
+                
+                reject(new Error('Błąd odtwarzania audio'));
+            };
+            
+            // Odtwórz audio z obsługą błędów
+            audioPlayer.play().catch(error => {
+                console.error('Błąd odtwarzania dźwięku:', error);
+                
+                // Reset przycisku w przypadku błędu
+                if (buttonElement) {
+                    buttonElement.disabled = false;
+                    buttonElement.innerHTML = '<i class="fas fa-play"></i> Odtwórz';
+                }
+                
+                reject(error);
+            });
+        } catch (error) {
+            console.error('Błąd w funkcji playAudioResponseAndWait:', error);
+            reject(error);
+        }
+    });
+};
+
+// Funkcja do odtwarzania odpowiedzi audio bez oczekiwania
 window.playAudioResponse = function(audioUrl, buttonElement = null) {
     // Zatrzymaj aktualnie odtwarzany dźwięk
     if (audioPlayer) {
@@ -811,7 +936,7 @@ window.showMessage = function(message, type) {
     }
     
     messageText.textContent = message;
-    messageContainer.classList.remove('hidden', 'success', 'error');
+    messageContainer.classList.remove('hidden', 'success', 'error', 'info');
     messageContainer.classList.add(type);
     
     // Auto-ukryj po 5 sekundach
