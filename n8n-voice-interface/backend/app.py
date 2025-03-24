@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from backend.stt import transcribe_audio
+from stt import transcribe_audio
 from backend.webhook import send_to_n8n
 from backend.tts import text_to_speech
 
