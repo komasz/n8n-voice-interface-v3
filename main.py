@@ -5,6 +5,7 @@ Launcher script for N8N Voice Interface on Replit
 import os
 import sys
 import shutil
+import subprocess
 
 # Get the root directory
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
