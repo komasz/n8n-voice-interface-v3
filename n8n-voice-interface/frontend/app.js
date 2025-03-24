@@ -12,6 +12,7 @@ let responseContainer;
 let responseText;
 let conversationContainer;
 let audioPlayer;
+let processingBeepPlayer = null; // Nowa zmienna dla odtwarzacza dźwięku przetwarzania
 let isListening = false;
 let isRecording = false;
 let isProcessing = false;
@@ -260,6 +261,33 @@ window.playGreeting = async function(greetingText = "Cześć. jestem agentem dep
     }
 };
 
+// Funkcja do odtwarzania dźwięku przetwarzania
+window.playProcessingBeep = function() {
+    try {
+        // Utwórz odtwarzacz audio, jeśli potrzeba
+        if (!processingBeepPlayer) {
+            processingBeepPlayer = new Audio();
+        }
+        
+        // Ustaw źródło na dźwięk sygnalizacyjny
+        processingBeepPlayer.src = 'processing-beep.mp3';
+        
+        // Skonfiguruj aby odtwarzać raz
+        processingBeepPlayer.loop = false;
+        
+        // Odtwórz dźwięk
+        processingBeepPlayer.play().catch(error => {
+            console.error('Błąd odtwarzania sygnału przetwarzania:', error);
+        });
+        
+        console.log('Odtwarzanie sygnału przetwarzania');
+        return true;
+    } catch (error) {
+        console.error('Błąd w funkcji playProcessingBeep:', error);
+        return false;
+    }
+};
+
 // Funkcja do wykrywania ciszy
 window.startSilenceDetection = function() {
     // Buffer for frequency data
@@ -403,7 +431,13 @@ window.startNewRecording = function() {
         
         // Only process if it's not too small
         if (audioBlob.size > 1000) {
-            window.processRecording(audioBlob, currentRecordingId, fileExtension);
+            // Odtwórz sygnał przetwarzania przed rozpoczęciem
+            window.playProcessingBeep();
+            
+            // Rozpocznij przetwarzanie po krótkim opóźnieniu, aby sygnał był słyszalny
+            setTimeout(() => {
+                window.processRecording(audioBlob, currentRecordingId, fileExtension);
+            }, 500); // 500ms opóźnienia, aby dźwięk był słyszalny
         } else {
             console.log(`Nagranie #${currentRecordingId} zbyt krótkie, pomijam`);
         }
