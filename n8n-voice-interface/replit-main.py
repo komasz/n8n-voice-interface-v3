@@ -1,13 +1,9 @@
+
 """
 Replit entry point for N8N Voice Interface
 """
 import os
 import sys
-import subprocess
-
-# Instaluj wymagane pakiety
-print("Installing required packages...")
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
 
 # Make sure STT_MODEL is set
 if "STT_MODEL" not in os.environ:
@@ -19,10 +15,16 @@ os.makedirs(temp_dir, exist_ok=True)
 
 # Add the project paths to the Python path
 project_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(project_path)
+n8n_path = os.path.join(project_path, "n8n-voice-interface")
+sys.path.insert(0, n8n_path)
+backend_path = os.path.join(n8n_path, "backend")
+sys.path.insert(0, backend_path)
+
+# Change working directory to backend directory
+os.chdir(backend_path)
 
 # Import the application
-from backend.app import app
+from app import app
 import uvicorn
 
 if __name__ == "__main__":
@@ -34,9 +36,4 @@ if __name__ == "__main__":
     print(f"Port: {port}")
     
     # Run the application
-    uvicorn.run(
-        "backend.app:app", 
-        host="0.0.0.0", 
-        port=port,
-        reload=False
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
