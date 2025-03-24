@@ -1,4 +1,4 @@
-run = "python main.py"
+run = "pip install fastapi uvicorn pydantic python-multipart httpx requests --user --break-system-packages && python main.py"
 entrypoint = "main.py"
 
 # Environment variables
@@ -18,9 +18,9 @@ channel = "stable-24_05"
 localPort = 8080
 externalPort = 80
 
-# Deployment settings
+# Deployment settings - Install packages before running
 [deployment]
-run = ["sh", "-c", "python main.py"]
+run = ["sh", "-c", "pip install fastapi uvicorn pydantic python-multipart httpx requests --user --break-system-packages && python main.py"]
 deploymentTarget = "cloudrun"
 
 # Language settings
