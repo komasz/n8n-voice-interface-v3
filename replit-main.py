@@ -1,13 +1,9 @@
+
 """
 Replit entry point for N8N Voice Interface
 """
 import os
 import sys
-import subprocess
-
-# Instaluj wymagane pakiety
-print("Installing required packages...")
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
 
 # Make sure STT_MODEL is set
 if "STT_MODEL" not in os.environ:
@@ -34,9 +30,4 @@ if __name__ == "__main__":
     print(f"Port: {port}")
     
     # Run the application
-    uvicorn.run(
-        "backend.app:app", 
-        host="0.0.0.0", 
-        port=port,
-        reload=False
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
